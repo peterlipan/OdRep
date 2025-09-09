@@ -207,7 +207,7 @@ class Trainer:
         surv_prob = torch.Tensor().cuda()
 
         # calculate the baseline_surv for deepsurv
-        if args.method.lower() == 'deepsurv':
+        if args.method.lower() in ['deepsurv', 'lassocox', 'coxtime']:
             bin_times = torch.arange(self.train_dataset.n_classes, dtype=torch.float32)  # or dataset.bin_times
             self.model.prepare_for_validation(self.train_loader, bin_times.to(duration.device))
 

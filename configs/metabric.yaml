@@ -16,7 +16,7 @@ n_bins: 25
 normalize: False
 
 # model
-method: 'ordsurv' # 'ordsurv', 'deephit', 'deepsurv', 'discrete'
+method: 'nll' # 'ordsurv', 'deephit', 'deepsurv', 'nll'
 backbone: 'MLP'
 n_layers: 2
 d_hid: 1024

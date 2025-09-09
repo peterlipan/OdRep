@@ -41,14 +41,29 @@ class DeepHit(nn.Module):
     def forward(self, data):
         features = self.encoder(data['data'])
         logits = self.head(features)
-        pmf = F.softmax(logits, dim=1)  # probability mass function
-        fht = torch.argmax(pmf, dim=1)  # first hitting time
-        prob_at_fht = torch.gather(pmf, 1, fht.unsqueeze(1)).squeeze(1)  # probability at first hitting time
-        risk = -fht
-        cdf = torch.cumsum(pmf, dim=1)  # cumulative distribution function
-        cdf = cdf.clamp(min=0, max=1)  # ensure
-        surv = 1. - cdf
-        return ModelOutputs(features=features, logits=logits, pmf=pmf, risk=risk, cdf=cdf, surv=surv, fht=fht, prob_at_fht=prob_at_fht)
+        pmf = F.softmax(logits, dim=1)  # [B, K]
+        
+        # expected first hitting time (risk score for C-index)
+        time_bins = torch.arange(1, pmf.size(1)+1, device=pmf.device).float()
+        risk = -(pmf * time_bins).sum(dim=1)  # higher risk -> earlier expected event
+        
+        # cumulative
+        cdf = torch.cumsum(pmf, dim=1)
+        surv = 1.0 - cdf
+        
+        # optional: discrete argmax FHT
+        fht = torch.argmax(pmf, dim=1)
+        prob_at_fht = torch.gather(pmf, 1, fht.unsqueeze(1)).squeeze(1)
+        
+        return ModelOutputs(features=features,
+                            logits=logits,
+                            pmf=pmf,
+                            risk=risk,
+                            cdf=cdf,
+                            surv=surv,
+                            fht=fht,
+                            prob_at_fht=prob_at_fht)
+
 
     def compute_loss(self, outputs, data):
         return self.criterion(

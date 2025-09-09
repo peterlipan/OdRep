@@ -38,10 +38,10 @@ class NllSurvLoss(nn.Module):
         )
 
 
-class DiscreteTime(nn.Module):
+class NllSurv(nn.Module):
     def __init__(self, args):
-        super(DiscreteTime, self).__init__()
-        
+        super(NllSurv, self).__init__()
+
         self.encoder = get_encoder(args)
         self.d_hid = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
         self.n_classes = args.n_classes

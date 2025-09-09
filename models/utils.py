@@ -35,9 +35,9 @@ def CreateModel(args):
     elif args.method.lower() == 'deepsurv':
         from .DeepSurv import DeepSurv
         return DeepSurv(args)
-    elif args.method.lower() == 'discrete':
-        from .DiscreteTime import DiscreteTime
-        return DiscreteTime(args)
+    elif args.method.lower() == 'nll':
+        from .NLLSurv import NllSurv
+        return NllSurv(args)
     elif args.method.lower() == 'angularord':
         from .AngularOrd import AngularOrdRep
         return AngularOrdRep(args)
@@ -53,5 +53,11 @@ def CreateModel(args):
     elif args.method.lower() == 'ordcls':
         from .OrdCls import OrdCls
         return OrdCls(args)
+    elif args.method.lower() == 'lassocox':
+        from .LassoCox import LassoCox
+        return LassoCox(args)
+    elif args.method.lower() == 'coxtime':
+        from .CoxTime import CoxTime
+        return CoxTime(args)
     else:
         raise ValueError(f"Unknown method: {args.method}.")

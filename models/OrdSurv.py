@@ -8,17 +8,15 @@ from .utils import ModelOutputs
 class CDFLoss(nn.Module):
     def __init__(self, 
                  cdf_weight: float = 1.,
-                 monotonic_weight: float = 0.1,
                  sigma: float = 0.5,
-                 margin: float = 0.,
                  rank_weight: float = 0.1,
+                 cal_weight: float = 0.1,
                  gamma: float = 0.5):
         super().__init__()
         self.sigma = sigma
         self.cdf_weight = cdf_weight
-        self.monotonic_weight = monotonic_weight
-        self.margin = margin
         self.rank_weight = rank_weight
+        self.cal_weight = cal_weight
         self.gamma = gamma
 
     @staticmethod
@@ -34,32 +32,19 @@ class CDFLoss(nn.Module):
         rank_mat = self.pair_rank_mat(durations, events)
         loss = rank_mat * torch.exp(-diff_risk / self.sigma)
         return loss.sum() / (rank_mat.sum() + 1e-6)
-    
-    def calibration_loss(self, F_pred: torch.Tensor, label: torch.Tensor, event: torch.Tensor) -> torch.Tensor:
+
+    def calibration_loss(self, cdf: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
         """
-        Compare predicted marginal CDF against empirical event histogram.
-        Only use uncensored samples (event == 1).
+        Brier-style calibration: compare predicted event probability with observed event.
         """
-        B, T = F_pred.shape
-        device = F_pred.device
-
-        with torch.no_grad():
-            hist = torch.zeros(T, device=device)
-            mask = (event == 1)
-            times = label[mask]
-            hist.scatter_add_(0, times, torch.ones_like(times, dtype=torch.float32))
-
-        hist = hist / (hist.sum() + 1e-6)  # Normalize empirical histogram
-        pred_mass = F_pred[event == 1]     # Only use uncensored predictions
-        marginal_pred = pred_mass.sum(dim=0)
-        marginal_pred = marginal_pred / (marginal_pred.sum() + 1e-6)
-
-        return F.mse_loss(marginal_pred, hist)
+        # Predicted marginal event probability = final CDF value (prob(event before end of horizon))
+        p_event = cdf[:, -1]   # [B]
+        target = events.float()  # 1 if uncensored (event occurred), 0 if censored
+        return ((p_event - target) ** 2).mean()
 
     def forward(self, outputs, data):
         F_pred = outputs.cdf
         risk = outputs.risk
-        # cos_sim = outputs.cos_sim
         label = data['label']
         event = data['event']
 
@@ -78,18 +63,15 @@ class CDFLoss(nn.Module):
 
         decay_weight = decay_weight * mask.float()
         cdf_loss = ((F_pred - target) ** 2 * decay_weight)[mask].sum() / (decay_weight[mask].sum() + 1e-6)
-        # bce_loss = F.binary_cross_entropy(F_pred, target, reduction='none')
-        # cdf_loss = (bce_loss * decay_weight)[mask].sum() / (decay_weight[mask].sum() + 1e-6)
-
-        monotonic_penalty = F.relu(F_pred[:, :-1] - F_pred[:, 1:] + self.margin).mean()
 
         rank_loss = self.rank_loss_on_risk(risk, label, event)
-        # calibration = self.calibration_loss(F_pred, label, event)
+
+        cal_loss = self.calibration_loss(F_pred, event)
 
         total_loss = (
             self.cdf_weight * cdf_loss +
-            self.monotonic_weight * monotonic_penalty +
-            self.rank_weight * rank_loss
+            self.rank_weight * rank_loss +
+            self.cal_weight * cal_loss
         )
 
         return total_loss
@@ -105,32 +87,11 @@ class OrdSurv(nn.Module):
         self.head = nn.Linear(self.d_hid, 1, bias=False)
 
         self.biases = nn.Parameter(torch.linspace(-1, 1, self.n_classes), requires_grad=True)
-        # self.biases = nn.Parameter(torch.randn(self.n_classes), requires_grad=True)
 
         self.criterion = CDFLoss()
-        self.scaler = nn.Parameter(1. * torch.ones(1))  # Scale for logits
+        self.scaler = nn.Parameter(2. * torch.ones(1))  # Scale for logits
 
     def forward(self, data):
-
-        # features = self.encoder(data['data'])
-        # proj = self.head(features)
-        # # multiply the biases by the magnitude of features and weights
-        # biases = self.biases.view(1, -1) * (features.norm(dim=1, keepdim=True) * self.head.weight.norm())
-        # logits = proj + biases # if self.training else proj + self.biases.view(1, -1)
-        # cdf = torch.sigmoid(logits * self.scaler)
-        # risk = proj.view(-1)  # [B * T]
-        # surv = 1. - cdf  # [B, T]
-
-        # features = self.encoder(data['data'])
-        # w = self.head.weight.squeeze(0)
-        # w = F.normalize(w, dim=0, p=2)  # Normalize the weight vector
-        # features = F.normalize(features, dim=1, p=2)  # Normalize the features
-        # proj = features @ w  # [B, 1]
-        # proj = proj.view(-1, 1)  # Reshape to [B, 1]
-        # logits = proj + self.biases.view(1, -1)  # [B, T]
-        # cdf = torch.sigmoid(logits* self.scaler)
-        # risk = proj.view(-1)  # [B * T]
-        # surv = 1. - cdf  # [B, T]
 
         features = self.encoder(data['data'])
         proj = self.head(features)  # [B, 1]
@@ -139,18 +100,10 @@ class OrdSurv(nn.Module):
         risk = proj.view(-1)  # [B * T]
         surv = 1. - cdf
 
-        # features_norm = F.normalize(features, dim=1, p=2)
-        # weight_norm = F.normalize(self.head.weight.squeeze(0), dim=0, p=2)
-        # cos_sim = features_norm @ weight_norm  # [B, 1]
-        # cos_sim = cos_sim.view(-1)
-        # risk = cos_sim
-
-
         return ModelOutputs(features=features,
                             logits=logits,
                             cdf=cdf,
                             risk=risk,
-                            # cos_sim=cos_sim,
                             surv=surv,
                             biases=self.biases,
                             projection_weight=self.head.weight.view(-1))
