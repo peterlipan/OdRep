@@ -2,7 +2,7 @@ def CreateDataset(args):
     if args.dataset.lower() == 'metabric':
         from .metabric_deephit import METABRICData
         return METABRICData(feature_file=args.feature_file, label_file=args.label_file, 
-                            n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed)
+                            step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed)
     elif args.dataset.lower() == 'support':
         from .pycox_datasets import SupportDataset
         return SupportDataset(n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)

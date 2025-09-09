@@ -8,7 +8,7 @@ from pycox.datasets import metabric, support, gbsg, flchain, nwtco, sac3, rr_nl_
 
 
 class PycoxDataset:
-    def __init__(self, pycox_dataloader, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
+    def __init__(self, pycox_dataloader, step=1.0, stratify=False, kfold=5, seed=42, normalize=False, unit_scale=1.0):
         self.pycox_dataloader = pycox_dataloader
         self.df = self._load_df()
         self.data, self.duration, self.event = self._preprocess_data(normalize=normalize)
@@ -17,14 +17,13 @@ class PycoxDataset:
         self.stratify = stratify
         self.kfold = kfold
         self.seed = seed
-        self.n_bins = n_bins
+        self.step = step
+        self.unit_scale = unit_scale
 
-        if n_bins > 0:
-            self.bin_durations(n_bins)
-            self.n_classes = n_bins + 2  # for edge bins
-        else:
-            self.n_classes = int(np.max(self.duration) * 1.2)  # default DeepHit-style horizon
-            self.label = self.duration.astype(np.int64)
+        # rescale the duration to unit of days
+        self.duration = (self.duration * unit_scale).astype(np.float32)
+        self.label = self._duration_to_label(self.duration)
+        self.n_classes = int(self.label.max() + 2)
 
     def _load_df(self):
         return self.pycox_dataloader.read_df()
@@ -42,17 +41,10 @@ class PycoxDataset:
         std = np.std(X, axis=0)
         std[std == 0] = 1
         return (X - mean) / std
-    
-    def bin_durations(self, n_bins):
-        # Bin duration using quantiles (equal number of samples per bin)
-        self.bin_edges = np.quantile(self.duration, q=np.linspace(0, 1, n_bins + 1))
-        self.label = np.digitize(self.duration, self.bin_edges[1:-1]).astype(np.int64) + 1
 
     def _duration_to_label(self, duration):
-        if self.n_bins > 0:
-            return np.digitize(duration, self.bin_edges[1:-1]).astype(np.int64) + 1
-        else:
-            return duration.astype(np.int64)
+        bin_idx = (duration // self.step).astype(np.int64) + 1 # start from 1
+        return bin_idx
     
     def get_kfold_datasets(self):
         if self.stratify:
@@ -90,20 +82,21 @@ class PytorchDataset(Dataset):
 
 # this raw data needs to be cleaned. Use deephit's instead.
 class MetabricDataset(PycoxDataset):
+    # the durations are in the unit of months
     def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(metabric, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize)
+        super().__init__(metabric, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.0)
 
 class SupportDataset(PycoxDataset):
     def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(support, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize)
+        super().__init__(support, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
 
 class GBSGDataset(PycoxDataset):
     def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(gbsg, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize)
+        super().__init__(gbsg, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.0)
 
 class FlchainDataset(PycoxDataset):
     def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(flchain, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize)
+        super().__init__(flchain, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
     
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)
@@ -114,7 +107,7 @@ class FlchainDataset(PycoxDataset):
 
 class NWTCODataSet(PycoxDataset):
     def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(nwtco, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize)
+        super().__init__(nwtco, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)

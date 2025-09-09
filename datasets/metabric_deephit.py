@@ -5,7 +5,7 @@ from sklearn.model_selection import KFold, StratifiedKFold
 
 
 class METABRICData:
-    def __init__(self, feature_file, label_file, n_bins=-1, stratify=False, kfold=5, seed=42):
+    def __init__(self, feature_file, label_file, step=1.0, stratify=False, kfold=5, seed=42, unit_scale=1.0):
 
         self.data, self.duration, self.event = self._load_and_normalize(feature_file, label_file)
         self.n_features = self.data.shape[1]
@@ -13,14 +13,15 @@ class METABRICData:
         self.stratify = stratify
         self.kfold = kfold
         self.seed = seed
-        self.n_bins = n_bins
+        self.step = step
+        self.unit_scale = unit_scale
 
-        if n_bins > 0:
-            self.bin_durations(n_bins)
-            self.n_classes = n_bins + 10  # for edge bins
-        else:
-            self.n_classes = int(np.max(self.duration) * 1.2)  # default DeepHit-style horizon
-            self.label = self.duration
+        # this merabric dataset from deephit seems to have durations in the unit of days
+        # thus no need to scale it
+        self.duration = (self.duration * unit_scale).astype(np.float32)
+        self.label = self._duration_to_label(self.duration)
+        self.n_classes = int(self.label.max() + 2)
+        
 
     def _load_and_normalize(self, feature_file, label_file):
         df_data = pd.read_csv(feature_file)
@@ -39,16 +40,9 @@ class METABRICData:
         std[std == 0] = 1
         return (X - mean) / std
 
-    def bin_durations(self, n_bins):
-        # Bin duration using quantiles (equal number of samples per bin)
-        self.bin_edges = np.quantile(self.duration, q=np.linspace(0, 1, n_bins + 1))
-        self.label = np.digitize(self.duration, self.bin_edges[1:-1]).astype(np.int64) + 5
-
     def _duration_to_label(self, duration):
-        if self.n_bins > 0:
-            return np.digitize(duration, self.bin_edges[1:-1]).astype(np.int64) + 5
-        else:
-            return duration.astype(np.int64)
+        bin_idx = (duration // self.step).astype(np.int64) + 1 # start from 1
+        return bin_idx
 
     def get_kfold_datasets(self):
         if self.stratify:

@@ -227,23 +227,29 @@ class Trainer:
                 event_indicator = torch.cat((event_indicator, data['event']), dim=0)
                 duration = torch.cat((duration, data['duration']), dim=0)
                 risk_prob = torch.cat((risk_prob, risk), dim=0)
-                if hasattr(outputs, 'surv'):
-                    surv_prob = torch.cat((surv_prob, outputs.surv), dim=0)
-                else:
-                    surv_prob = None
-            
+                surv_prob = torch.cat((surv_prob, outputs.surv), dim=0)
+
             event_indicator = event_indicator.cpu().detach().numpy().astype(bool)
             duration = duration.cpu().detach().numpy()
             risk_prob = risk_prob.cpu().detach().numpy()
-            surv_prob = surv_prob.cpu().detach().numpy() if surv_prob is not None else None
+            surv_prob = surv_prob.cpu().detach().numpy()
             test_surv = Surv.from_arrays(event=event_indicator, time=duration)
 
-            n_eval = int(args.n_bins * 10) if args.n_bins > 0 else 3000
-            valid_durations = duration[event_indicator]
-            time_points = np.linspace(valid_durations.min(), valid_durations.max() - 1, n_eval)
-            time_labels = self.test_dataset._duration_to_label(time_points)
+            # Earliest event
+            min_time = duration[event_indicator].min()
+            # Last evaluable time = largest event time strictly less than max censoring
+            censor_mask = ~event_indicator
+            if censor_mask.any():
+                max_censor_time = duration[censor_mask].max()
+                max_time = duration[(event_indicator) & (duration < max_censor_time)].max()
+            else:
+                max_time = duration.max()  # no censoring case
 
-            surv_prob = surv_prob[:, time_labels] if surv_prob is not None else None
+            # Sample times within [min_time, max_time]
+            eval_step = args.step  # keep consistent with training
+            time_points = np.arange(min_time, max_time + 1e-12, eval_step, dtype=float)
+            time_labels = self.test_dataset._duration_to_label(time_points)
+            surv_prob = surv_prob[:, time_labels]
 
             metric_dict = compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, time_points)
             metric_dict['Loss'] = loss / len(self.test_loader)
@@ -275,8 +281,8 @@ class Trainer:
         df_name = f"{args.kfold}Fold_{args.dataset}.xlsx"
         res_path = args.results
 
-        settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Bins']
-        kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed', 'n_bins']
+        settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Step (days)']
+        kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed', 'step']
 
         set2kwargs = {k: v for k, v in zip(settings, kwargs )}
 
