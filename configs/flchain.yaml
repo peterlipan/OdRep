@@ -10,7 +10,7 @@ results: './results'
 
 kfold: 5
 stratify: True
-n_bins: 25
+step: 30. # step for time bin discretization in days
 normalize: False
 
 # model

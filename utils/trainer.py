@@ -11,25 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import Normalize
 import matplotlib.cm as cm
-
-
-class MetricLogger:
-    def __init__(self, n_folds):
-        self.n_folds = n_folds
-        self.fold_metrics = [{} for _ in range(n_folds)]
-
-    def update(self, metric_dict, fold):
-        self.fold_metrics[fold] = metric_dict
-
-    def metrics(self):
-        return list(self.fold_metrics[0].keys()) if self.fold_metrics[0] else []
-
-    def fold_average(self):
-        avg_metrics = {k: 0.0 for k in self.metrics()}
-        for metric in avg_metrics:
-            avg_metrics[metric] = np.mean([fold[metric] for fold in self.fold_metrics])
-        return avg_metrics
-
+from .utils import MetricLogger
 
 
 class Trainer:
@@ -75,19 +57,17 @@ class Trainer:
         dataset = CreateDataset(args)
         self.train_dataset, self.test_dataset = dataset.get_official_train_test()
         self._init_components()
-
         self.fold = 0
-
+        
         self.train()
         metric_dict = self.validate()
-        self.m_logger.update(metric_dict, self.fold)
+        self.m_logger.update(metric_dict)
         if self.verbose:
             print('-'*20, 'Metrics', '-'*20)
         print(metric_dict)
         if args.method == 'deepcdf' and args.n_bins > 0:
             self._fold_plot_2d(metric_dict, self.test_loader, training_set=False)
             self._fold_plot_2d(metric_dict, self.train_loader, training_set=True)
-        # self.fold_univariate_cox_regression_analysis(args, self.fold)
         self._save_fold_avg_results(metric_dict)
 
     def kfold_train(self):

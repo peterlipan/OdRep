@@ -83,21 +83,21 @@ class PytorchDataset(Dataset):
 # this raw data needs to be cleaned. Use deephit's instead.
 class MetabricDataset(PycoxDataset):
     # the durations are in the unit of months
-    def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(metabric, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
+        super().__init__(metabric, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375)
 
 class SupportDataset(PycoxDataset):
-    def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(support, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
+        super().__init__(support, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
 
 class GBSGDataset(PycoxDataset):
-    def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(gbsg, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
+        super().__init__(gbsg, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375)
 
 class FlchainDataset(PycoxDataset):
-    def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(flchain, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
-    
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
+        super().__init__(flchain, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)
         # drop the categorical columns, sample.yr and flc.grp
@@ -106,8 +106,8 @@ class FlchainDataset(PycoxDataset):
         return df
 
 class NWTCODataSet(PycoxDataset):
-    def __init__(self, n_bins=-1, stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(nwtco, n_bins=n_bins, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
+        super().__init__(nwtco, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)

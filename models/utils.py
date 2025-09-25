@@ -59,5 +59,8 @@ def CreateModel(args):
     elif args.method.lower() == 'coxtime':
         from .CoxTime import CoxTime
         return CoxTime(args)
+    elif args.method.lower() == 'decouple':
+        from .decouple import Decouple
+        return Decouple(args)
     else:
         raise ValueError(f"Unknown method: {args.method}.")

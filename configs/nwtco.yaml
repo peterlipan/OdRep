@@ -10,7 +10,7 @@ results: './results'
 
 kfold: 5
 stratify: True
-n_bins: 25
+step: 30. # step for time bin discretization in days
 normalize: False
 
 # model
@@ -27,7 +27,7 @@ workers: 0
 optimizer: 'Adam'
 epochs: 100
 batch_size: 256
-lr: 2.0e-4
+lr: 5.0e-5
 lr_policy: 'cosine'
 weight_decay: 0.01
 verbose: True

@@ -5,16 +5,16 @@ def CreateDataset(args):
                             step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed)
     elif args.dataset.lower() == 'support':
         from .pycox_datasets import SupportDataset
-        return SupportDataset(n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
+        return SupportDataset(step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
     elif args.dataset.lower() == 'gbsg':
         from .pycox_datasets import GBSGDataset
-        return GBSGDataset(n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
+        return GBSGDataset(step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
     elif args.dataset.lower() == 'flchain':
         from .pycox_datasets import FlchainDataset
-        return FlchainDataset(n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
+        return FlchainDataset(step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
     elif args.dataset.lower() == 'nwtco':
         from .pycox_datasets import NWTCODataSet
-        return NWTCODataSet(n_bins=args.n_bins, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
+        return NWTCODataSet(step=args.step, stratify=args.stratify, kfold=args.kfold, seed=args.seed, normalize=args.normalize)
     elif args.dataset.lower() == 'gbmlgg':
         from .tcga_gbmlgg import TcgaGbmLggData
         return TcgaGbmLggData(data_root=args.data_root, pickle_path=args.pickle_path, backbone=args.backbone, task=args.task,
@@ -25,3 +25,6 @@ def CreateDataset(args):
     elif args.dataset.lower() == 'knee_osteoarthritis':
         from .knee_osteoarthritis import KneeOsteoarthritisData
         return KneeOsteoarthritisData(root=args.data_root, backbone=args.backbone)
+    elif args.dataset.lower() == 'external':
+        from .external import RotterdamGBSGData
+        return RotterdamGBSGData(step=args.step, seed=args.seed)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-configs=("metabric")
-methods=("decouple" "ordsurv" "deepsurv" "deephit" "nll" "lassocox" "coxtime")
+configs=("external")
+methods=("decouple" "ordsurv" "deepsurv" "deephit" "nll")
 steps=(1.0 7.0 30.0 180.0 365.0 1825.0)
 
 for config in "${configs[@]}"; do

@@ -51,27 +51,50 @@ class CDFLoss(nn.Module):
         return nll + self.rank_weight * rloss
 
 
-class OrdSurv(nn.Module):
+class Decouple(nn.Module):
     def __init__(self, args):
-        super(OrdSurv, self).__init__()
+        super(Decouple, self).__init__()
 
-        self.encoder = get_encoder(args)
-        self.d_hid = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
+        self.encoder   = get_encoder(args)
+        self.d_hid     = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
         self.n_classes = args.n_classes
-        self.head = nn.Linear(self.d_hid, 1, bias=False)
+
+        # Same linear head; we will normalize its weight for the angular score
+        self.head   = nn.Linear(self.d_hid, 1, bias=False)
 
         self.biases = nn.Parameter(torch.linspace(-1, 1, self.n_classes), requires_grad=True)
-
         self.criterion = CDFLoss()
-        self.scaler = nn.Parameter(2. * torch.ones(1))  # Scale for logits
+
+        # Global scale kept for backward compatibility; now multiplied with per-sample tau
+        self.scaler = nn.Parameter(2. * torch.ones(1))
+
+        # NEW: tiny temperature head mapping radius r = ||features|| to a positive tau
+        # (softplus keeps it > 0; simple and minimal)
+        self.temp = nn.Linear(1, 1)
+
+    def _tau_from_radius(self, r: torch.Tensor) -> torch.Tensor:
+        # r: [B,1]  -> tau: [B,1], strictly positive
+        return F.softplus(self.temp(r)) + 1e-4
 
     def forward(self, data):
+        features = self.encoder(data['data'])                # [B,D]
 
-        features = self.encoder(data['data'])
-        proj = self.head(features)  # [B, 1]
-        logits = proj + self.biases.view(1, -1)  # [B, T]
-        cdf = torch.sigmoid(logits * self.scaler)  # [B, T]
-        risk = proj.view(-1)  # [B * T]
+        # --- Decoupling starts here ---
+        # Angular (scale-free) score for ranking
+        r = features.norm(dim=1, keepdim=True).clamp_min(1e-6)  # [B,1]
+        u = features / r                                         # [B,D] unit direction
+        w_hat = F.normalize(self.head.weight, dim=1)             # [1,D]
+        s_ang = (u @ w_hat.t())                                  # [B,1] in [-1,1]
+
+        # Per-sample temperature for calibration (likelihood path)
+        tau = self._tau_from_radius(r)                           # [B,1]
+
+        # NLL logits: same angular location + learned thresholds, scaled by tau (and global scaler)
+        logits = (s_ang + self.biases.view(1, -1)) * (self.scaler * tau)   # [B,T]
+        cdf    = torch.sigmoid(logits)                                     # [B,T]
+        # --- Decoupling ends here ---
+
+        risk = s_ang.view(-1)       # ranking uses angles only
         surv = 1. - cdf
 
         return ModelOutputs(features=features,
@@ -80,7 +103,9 @@ class OrdSurv(nn.Module):
                             risk=risk,
                             surv=surv,
                             biases=self.biases,
-                            projection_weight=self.head.weight.view(-1))
+                            projection_weight=self.head.weight.view(-1),
+                            radius=r.view(-1),
+                            tau=tau.view(-1))
 
     def compute_loss(self, outputs, data):
         return self.criterion(outputs, data)
