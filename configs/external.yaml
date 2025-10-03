@@ -10,16 +10,16 @@ results: './results'
 
 kfold: -1 # use the external validation set
 stratify: True
-step: 30. # step for time bin discretization in days
+step: 1. # step for time bin discretization in days
 normalize: False
 
 # model
-method: 'decouple' # 'ordsurv', 'deephit', 'deepsurv', 'nll'
+method: 'ordsurv' # 'ordsurv', 'deephit', 'deepsurv', 'nll'
 backbone: 'MLP'
-n_layers: 4
-d_hid: 1024
+n_layers: 2
+d_hid: 2048
 dropout: 0.
-activation: 'tanh'
+activation: 'leaky_relu'
 
 
 # training

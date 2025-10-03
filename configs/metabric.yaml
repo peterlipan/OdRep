@@ -18,10 +18,10 @@ normalize: False
 # model
 method: 'decouple' # 'ordsurv', 'deephit', 'deepsurv', 'nll'
 backbone: 'MLP'
-n_layers: 4
+n_layers: 3
 d_hid: 1024
 dropout: 0.
-activation: 'tanh'
+activation: 'leaky_relu'
 
 
 # training

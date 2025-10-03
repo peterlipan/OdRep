@@ -43,6 +43,8 @@ class MLP(nn.Module):
             return nn.Tanh()
         elif name == 'leaky_relu':
             return nn.LeakyReLU(negative_slope=0.1)
+        elif name == 'gelu':
+            return nn.GELU()
         else:
             raise ValueError(f"Unsupported activation function: {name}")
 
