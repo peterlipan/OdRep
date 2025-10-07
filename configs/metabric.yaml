@@ -14,6 +14,8 @@ kfold: 5
 stratify: True
 step: 30. # step for time bin discretization in days
 normalize: False
+pad_left: 1 # number of left padding intervals
+pad_right: 1 # number of right padding intervals
 
 # model
 method: 'decouple' # 'ordsurv', 'deephit', 'deepsurv', 'nll'

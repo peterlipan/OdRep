@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 
 
 class RotterdamGBSGData:
-    def __init__(self, step=1.0, seed=42):
+    def __init__(self, step=1.0, seed=42, pad_left=1, pad_right=1):
         """
         Combined Rotterdam and GBSG dataset class
         Rotterdam is used as training set, GBSG as external validation
@@ -23,6 +23,8 @@ class RotterdamGBSGData:
         
         self.seed = seed
         self.step = step
+        self.pad_left = pad_left
+        self.pad_right = pad_right
         
         # Convert duration to labels
         self.rotterdam_label = self._duration_to_label(self.rotterdam_duration)
@@ -30,7 +32,7 @@ class RotterdamGBSGData:
         
         # Calculate n_classes based on both datasets
         max_label = max(self.rotterdam_label.max(), self.gbsg_label.max())
-        self.n_classes = int(max_label + 2)
+        self.n_classes = int(max_label + self.pad_left + self.pad_right)  # including padding at both ends
 
     def _load_rotterdam(self):
         """Load and preprocess Rotterdam dataset"""
@@ -111,7 +113,7 @@ class RotterdamGBSGData:
 
     def _duration_to_label(self, duration):
         """Convert duration to discrete labels"""
-        bin_idx = (duration // self.step).astype(np.int64) + 1  # start from 1
+        bin_idx = (duration // self.step).astype(np.int64) + self.pad_left  # padding on the left
         return bin_idx
 
     def get_official_train_test(self):

@@ -5,7 +5,8 @@ from sklearn.model_selection import KFold, StratifiedKFold
 
 
 class METABRICData:
-    def __init__(self, feature_file, label_file, step=1.0, stratify=False, kfold=5, seed=42, unit_scale=1.0):
+    def __init__(self, feature_file, label_file, step=1.0, stratify=False, 
+                 kfold=5, seed=42, unit_scale=1.0, pad_left=1, pad_right=1):
 
         self.data, self.duration, self.event = self._load_and_normalize(feature_file, label_file)
         self.n_features = self.data.shape[1]
@@ -15,12 +16,14 @@ class METABRICData:
         self.seed = seed
         self.step = step
         self.unit_scale = unit_scale
+        self.pad_left = pad_left
+        self.pad_right = pad_right
 
         # this merabric dataset from deephit seems to have durations in the unit of days
         # thus no need to scale it
         self.duration = (self.duration * unit_scale).astype(np.float32)
         self.label = self._duration_to_label(self.duration)
-        self.n_classes = int(self.label.max() + 2)
+        self.n_classes = int(self.label.max() + self.pad_left + self.pad_right)  # including padding at both ends
         
 
     def _load_and_normalize(self, feature_file, label_file):
@@ -41,7 +44,7 @@ class METABRICData:
         return (X - mean) / std
 
     def _duration_to_label(self, duration):
-        bin_idx = (duration // self.step).astype(np.int64) + 1 # start from 1
+        bin_idx = (duration // self.step).astype(np.int64) + self.pad_left  # padding on the left
         return bin_idx
 
     def get_kfold_datasets(self):

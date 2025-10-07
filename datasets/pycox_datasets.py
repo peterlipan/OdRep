@@ -8,7 +8,8 @@ from pycox.datasets import metabric, support, gbsg, flchain, nwtco, sac3, rr_nl_
 
 
 class PycoxDataset:
-    def __init__(self, pycox_dataloader, step=1.0, stratify=False, kfold=5, seed=42, normalize=False, unit_scale=1.0):
+    def __init__(self, pycox_dataloader, step=1.0, stratify=False, 
+                 kfold=5, seed=42, normalize=False, unit_scale=1.0, pad_left=1, pad_right=1):
         self.pycox_dataloader = pycox_dataloader
         self.df = self._load_df()
         self.data, self.duration, self.event = self._preprocess_data(normalize=normalize)
@@ -18,12 +19,14 @@ class PycoxDataset:
         self.kfold = kfold
         self.seed = seed
         self.step = step
+        self.pad_left = pad_left
+        self.pad_right = pad_right
         self.unit_scale = unit_scale
 
         # rescale the duration to unit of days
         self.duration = (self.duration * unit_scale).astype(np.float32)
         self.label = self._duration_to_label(self.duration)
-        self.n_classes = int(self.label.max() + 2)
+        self.n_classes = int(self.label.max() + self.pad_left + self.pad_right)  # including padding at both ends
 
     def _load_df(self):
         return self.pycox_dataloader.read_df()
@@ -43,7 +46,7 @@ class PycoxDataset:
         return (X - mean) / std
 
     def _duration_to_label(self, duration):
-        bin_idx = (duration // self.step).astype(np.int64) + 1 # start from 1
+        bin_idx = (duration // self.step).astype(np.int64) + self.pad_left  # padding on the left
         return bin_idx
     
     def get_kfold_datasets(self):
@@ -83,20 +86,20 @@ class PytorchDataset(Dataset):
 # this raw data needs to be cleaned. Use deephit's instead.
 class MetabricDataset(PycoxDataset):
     # the durations are in the unit of months
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(metabric, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
+        super().__init__(metabric, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right)
 
 class SupportDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(support, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
+        super().__init__(support, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
 
 class GBSGDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(gbsg, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
+        super().__init__(gbsg, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right)
 
 class FlchainDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(flchain, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
+        super().__init__(flchain, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)
@@ -106,8 +109,8 @@ class FlchainDataset(PycoxDataset):
         return df
 
 class NWTCODataSet(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False):
-        super().__init__(nwtco, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
+        super().__init__(nwtco, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)
