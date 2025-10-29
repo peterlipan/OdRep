@@ -62,5 +62,8 @@ def CreateModel(args):
     elif args.method.lower() == 'decouple':
         from .decouple import Decouple
         return Decouple(args)
+    elif args.method.lower() == 'angsurv':
+        from .AngSurv import AngSurv
+        return AngSurv(args)
     else:
         raise ValueError(f"Unknown method: {args.method}.")

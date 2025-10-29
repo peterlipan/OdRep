@@ -16,7 +16,7 @@ pad_left: 1 # number of left padding intervals
 pad_right: 1 # number of right padding intervals
 
 # model
-method: 'ordsurv' # 'ordsurv', 'deephit', 'deepsurv', 'nll'
+method: 'angsurv' # 'ordsurv', 'deephit', 'deepsurv', 'nll', 'angsurv'
 backbone: 'MLP'
 n_layers: 2
 d_hid: 2048
