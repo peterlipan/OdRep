@@ -71,6 +71,7 @@ class Decouple(nn.Module):
         # NEW: tiny temperature head mapping radius r = ||features|| to a positive tau
         # (softplus keeps it > 0; simple and minimal)
         self.temp = nn.Linear(1, 1)
+        self._eps = 1e-7
 
     def _tau_from_radius(self, r: torch.Tensor) -> torch.Tensor:
         # r: [B,1]  -> tau: [B,1], strictly positive
@@ -94,8 +95,13 @@ class Decouple(nn.Module):
         cdf    = torch.sigmoid(logits)                                     # [B,T]
         # --- Decoupling ends here ---
 
-        risk = s_ang.view(-1)       # ranking uses angles only
         surv = 1. - cdf
+
+        # force monotonicity only during eval
+        if not self.training:
+            cdf = torch.cummax(cdf, dim=1).values.clamp_(min=self._eps, max=1.0 - self._eps)
+            surv = 1.0 - cdf
+        risk = s_ang.view(-1)       # ranking uses angles only
 
         return ModelOutputs(features=features,
                             logits=logits,

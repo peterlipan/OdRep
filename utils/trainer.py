@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 import torch
 import warnings
 import pandas as pd
@@ -69,6 +71,7 @@ class Trainer:
             self._fold_plot_2d(metric_dict, self.test_loader, training_set=False)
             self._fold_plot_2d(metric_dict, self.train_loader, training_set=True)
         self._save_fold_avg_results(metric_dict)
+        self.save_survival_predictions(self.test_loader, split="test")
 
     def kfold_train(self):
         args = self.args
@@ -89,11 +92,7 @@ class Trainer:
             if self.verbose:
                 print('-'*20, f'Fold {fold} Metrics', '-'*20)
             print(metric_dict)
-            if args.method == 'deepcdf' and args.n_bins > 0:
-                self._fold_plot_2d(metric_dict, self.test_loader, training_set=False)
-                self._fold_plot_2d(metric_dict, self.train_loader, training_set=True)
-                self.plot_risk_cdf_curves(self.train_loader, training_set=True)
-                self.plot_risk_cdf_curves(self.test_loader, training_set=False)
+            self.save_survival_predictions(self.test_loader, split="oof")
 
             # self.fold_univariate_cox_regression_analysis(args, fold)
 
@@ -109,8 +108,6 @@ class Trainer:
         else:
             self.official_train_test()
 
-        # save the model
-        # self.save_model(args)
 
     def train(self):
         args = self.args
@@ -248,6 +245,138 @@ class Trainer:
             raise ValueError(f"Unknown task: {args.task}. Supported tasks are: classification, survival.")
 
         return metric_dict
+    
+    @torch.no_grad()
+    def save_survival_predictions(self, dataloader, split: str = "test"):
+        """
+        Save per-patient survival S(t) at the model's *effective* (non-padded) bins.
+        Appends across folds to a single Parquet; writes a JSON sidecar with exact
+        effective bin endpoints (days) and padding info.
+
+        Columns written:
+          patient_id, event_time_days, event_indicator, Fold, Split, Dataset, Method, Backbone, Step_days,
+          Pad_left, Pad_right, S_000 ... S_{T_eff-1}
+
+        Notes:
+        - durations in your datasets are already standardized to *days*.
+        - padding defaults to 1 left + 1 right; override via args.pad_left/args.pad_right if needed.
+        - works for all survival methods as long as forward() returns outputs.surv [B, T_native].
+        """
+        args = self.args
+        was_training = self.model.training
+        self.model.eval()
+
+        # Cox-style models may need baseline prep (mirror your validate())
+        if args.method.lower() in ['deepsurv', 'lassocox', 'coxtime']:
+            # Use the training dataset's native "bin indices" (as in your validate())
+            bin_times = torch.arange(self.train_dataset.n_classes, dtype=torch.float32)
+            self.model.prepare_for_validation(self.train_loader, bin_times.cuda())
+
+        # Padding config (your setup is 1+1; keep configurable)
+        pad_l = args.pad_left
+        pad_r = args.pad_right
+
+        # Collect predictions
+        all_pid, all_event, all_time = [], [], []
+        blocks = []
+        row_counter = 0
+        T_native = None
+
+        for batch in dataloader:
+            batch_cuda = {k: (v.cuda(non_blocking=True) if hasattr(v, 'cuda') else v) for k, v in batch.items()}
+            outputs = self.model(batch_cuda)                        # expects outputs.surv: [B, T_native]
+            S_native = outputs.surv.detach().cpu().numpy()          # [B, T_native]
+            B, T = S_native.shape
+            if T_native is None:
+                T_native = T
+
+            # Strip padding on both sides → effective bins only
+            if pad_l + pad_r >= T:
+                raise ValueError(f"Padding ({pad_l}+{pad_r}) >= T_native ({T}).")
+            S_eff = S_native[:, pad_l:T - pad_r]                   # [B, T_eff]
+            blocks.append(S_eff)
+
+            # IDs (dataset may not provide patient_id/filename → synthesize fold-stable IDs)
+            pids = batch.get('patient_id', batch.get('filename', None))
+            if pids is None:
+                pids = [f"Fold{getattr(self,'fold',0)}_row{row_counter+i}" for i in range(B)]
+            else:
+                if torch.is_tensor(pids):
+                    pids = pids.detach().cpu().tolist()
+                pids = [str(x) for x in pids]
+
+            # durations/events are already *days*
+            ev = batch['event']; du = batch['duration']
+            if torch.is_tensor(ev): ev = ev.detach().cpu().numpy()
+            if torch.is_tensor(du): du = du.detach().cpu().numpy()
+
+            all_pid.extend(pids)
+            all_event.extend(ev.astype(bool).tolist())
+            all_time.extend(du.tolist())
+            row_counter += B
+
+        if T_native is None:
+            self.model.train(was_training)
+            return  # nothing to save
+
+        S_mat = np.vstack(blocks)                # [N, T_eff]
+        T_eff = S_mat.shape[1]
+
+        # Effective right-endpoint times in *days* (padding removed).
+        # Prefer dataset-provided bin times if available; else derive from step.
+        if hasattr(self.train_dataset, "bin_times") and self.train_dataset.bin_times is not None:
+            times_days_eff = np.asarray(self.train_dataset.bin_times, dtype=float)[pad_l:T_native - pad_r].tolist()
+        else:
+            step_days = float(getattr(args, "step", 1.0))
+            times_days_eff = (np.arange(1, T_eff + 1, dtype=float) * step_days).tolist()
+
+        # Build dataframe
+        S_cols = [f"S_{k:03d}" for k in range(T_eff)]
+        df = pd.DataFrame(S_mat, columns=S_cols)
+        df.insert(0, "patient_id", all_pid)
+        df.insert(1, "event_time_days", all_time)
+        df.insert(2, "event_indicator", np.asarray(all_event, dtype=bool))
+        df["Fold"] = int(getattr(self, "fold", 0))
+        df["Split"] = split                           # "test" (external) or "oof" (kfold held-out)
+        df["Dataset"] = args.dataset
+        df["Method"] = args.method
+        df["Backbone"] = args.backbone
+        df["Step_days"] = float(getattr(args, "step", 1.0))
+        df["Pad_left"] = pad_l
+        df["Pad_right"] = pad_r
+
+        # Paths
+        base_dir = Path(args.results) / "surv_preds" / args.dataset
+        base_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{args.method}__{args.backbone}__step{int(args.step)}d"
+        parquet_path = base_dir / f"{stem}.parquet"
+        sidecar_path = base_dir / f"{stem}.json"
+
+        # Append across folds
+        if parquet_path.exists():
+            prev = pd.read_parquet(parquet_path)
+            combined = pd.concat([prev, df], ignore_index=True)
+            combined.drop_duplicates(subset=["patient_id", "Fold", "Split"], keep="last", inplace=True)
+            combined.to_parquet(parquet_path, index=False)
+        else:
+            df.to_parquet(parquet_path, index=False)
+
+        # JSON sidecar (exact effective bin endpoints, days)
+        sidecar = {
+            "model_name": f"{args.method}_{args.backbone}",
+            "dataset": args.dataset,
+            "discretization_step_days": float(getattr(args, "step", 1.0)),
+            "times_days_eff": times_days_eff,            # effective right-endpoints (padding removed)
+            "right_continuous": True,
+            "n_bins_eff": int(T_eff),
+            "pad_left": pad_l,
+            "pad_right": pad_r,
+            "horizon_days": float(times_days_eff[-1]) if len(times_days_eff) else 0.0,
+        }
+        with open(sidecar_path, "w") as f:
+            json.dump(sidecar, f, indent=2)
+
+        self.model.train(was_training)
 
     def save_model(self):
         args = self.args
@@ -404,128 +533,5 @@ class Trainer:
             existing_df.to_excel(df_path, index=False)
 
         self.model.train(training)       
-    
-    def _fold_plot_2d(self, metric_dict, dataloader, training_set, uncensored=True):
-        args = self.args
-        fold = self.fold
-        training = self.model.training
-        suffix = '_training' if training_set else ''
-        self.model.eval()
-        save_path = os.path.join(args.results, args.dataset, f"Fold_{fold}_{args.method}{suffix}.png")
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-        # Storage
-        coord_x = torch.Tensor().cuda()
-        coord_y = torch.Tensor().cuda()
-        event = torch.Tensor().cuda()
-        duration = torch.Tensor().cuda()
 
-        # Collect data
-        with torch.no_grad():
-            for data in dataloader:
-                data = {k: v.cuda(non_blocking=True) if hasattr(v, 'cuda') else v for k, v in data.items()}
-                outputs = self.model.project_2d(data)
-                coord_x = torch.cat((coord_x, outputs.x), dim=0)
-                coord_y = torch.cat((coord_y, outputs.y), dim=0)
-                event = torch.cat((event, data['event']), dim=0)
-                duration = torch.cat((duration, data['duration']), dim=0)
-
-        # Convert to NumPy
-        coord_x = coord_x.cpu().numpy()
-        coord_y = coord_y.cpu().numpy()
-        event = event.cpu().numpy()
-        duration = duration.cpu().numpy()
-        biases = self.model.biases.cpu().detach().numpy()
-        # print(f"Fold {fold} — Biases: {biases}")
-
-        # Normalize duration for red colormap
-        norm = Normalize(vmin=duration[event == 1].min(), vmax=duration[event == 1].max())
-        cmap = cm.Reds
-
-        # Prepare figure
-        plt.figure(figsize=(8, 6))
-
-        # Plot censored (event=0) in blue
-        if not uncensored:
-            plt.scatter(coord_x[event == 0], coord_y[event == 0], color='blue', alpha=0.5, label='Censored')
-
-        # Plot events (event=1) in red with colormap based on duration
-        colors = cmap(norm(duration[event == 1]))
-        plt.scatter(coord_x[event == 1], coord_y[event == 1], color=colors, alpha=0.7, label='Event')
-
-        # Add colorbar for duration
-        sm = cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = plt.colorbar(sm)
-        cbar.set_label('Survival Time')
-
-        # Plot vertical threshold lines (CDF biases)
-        for b in biases:
-            plt.axvline(x=-b, color='black', linestyle='--', alpha=0.5)
-
-        # Plot formatting
-        plt.xlabel("Projection (along head weight)")
-        plt.ylabel("Perpendicular Component")
-        plt.title(f"Fold {fold} — C-Index: {metric_dict['C-index']:.4f}")
-        plt.legend(loc='upper right')
-        plt.grid(False)
-
-        # Save and cleanup
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        # Restore training state
-        self.model.train(training)
-
-    def plot_risk_cdf_curves(self, dataloader, training_set=False):
-        args = self.args
-        fold = self.fold
-        self.model.eval()
-        training = self.model.training
-        suffix = '_training' if training_set else ''
-        save_path = os.path.join(args.results, args.dataset, f"Fold_{fold}_CDFRiskCurves{suffix}.png")
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-        cdfs, labels = [], []
-        with torch.no_grad():
-            for data in dataloader:
-                data = {k: v.cuda(non_blocking=True) if hasattr(v, 'cuda') else v for k, v in data.items()}
-                outputs = self.model(data)  # Should return logits internally passed through sigmoid → CDF
-                cdfs.append(outputs.cdf.cpu())
-                labels.append(data['label'].cpu())
-
-        # Stack everything
-        cdfs = torch.cat(cdfs, dim=0).numpy()
-        labels = torch.cat(labels, dim=0).numpy()
-
-        # Sort by risk
-        lowest_time_idx = np.min(labels)
-        highest_time_idx = np.max(labels)
-        median_time_idx = np.median(labels).astype(int)
-
-        lowest_avg_cdf = np.mean(cdfs[labels == lowest_time_idx], axis=0)
-        highest_avg_cdf = np.mean(cdfs[labels == highest_time_idx], axis=0)
-        median_avg_cdf = np.mean(cdfs[labels == median_time_idx], axis=0)
-
-        # Time bins
-        time_bins = np.arange(cdfs.shape[1])
-
-        # Plot
-        plt.figure(figsize=(8, 6))
-
-        for cdf, color, time_idx in zip([lowest_avg_cdf, median_avg_cdf, highest_avg_cdf],
-                                    ['red', 'orange', 'green'],
-                                    [lowest_time_idx, median_time_idx, highest_time_idx]):
-            plt.plot(time_bins, cdf, label=f"Label = {time_idx}", color=color)
-            # plt.axvline(labels[idx], color=color, linestyle='--', alpha=0.7)
-
-        plt.xlabel("Time Bin Index")
-        plt.ylabel("Predicted CDF")
-        plt.title(f"Fold {fold} — CDF Curves by Risk Stratification")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        self.model.train(training)
