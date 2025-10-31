@@ -111,6 +111,7 @@ class AngSurv(nn.Module):
 
         self.criterion = CDFLoss()
         self.scaler = nn.Parameter(2. * torch.ones(1))  # Scale for logits
+        self._eps = 1e-7
 
     def forward(self, data):
         x = data['data']
@@ -122,6 +123,8 @@ class AngSurv(nn.Module):
         proj = self.head(features)  # [B, 1]  uses raw weight -> keeps magnitude for NLL/CRPS
         logits = proj + self.biases.view(1, -1)  # [B, T]
         cdf = torch.sigmoid(logits * self.scaler).clamp(1e-7, 1 - 1e-7)
+        if not self.training:
+            cdf = torch.cummax(cdf, dim=1).values.clamp_(min=self._eps, max=1.0 - self._eps)
         surv = 1. - cdf
 
         # --- ranking path (angular / cosine) ---
