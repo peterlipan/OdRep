@@ -1,12 +1,12 @@
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 
 
 class METABRICData:
     def __init__(self, feature_file, label_file, step=1.0, stratify=False, 
-                 kfold=5, seed=42, unit_scale=1.0, pad_left=1, pad_right=1):
+                 kfold=5, seed=42, unit_scale=1.0, pad_left=1, pad_right=1, train_ratio=1.0):
 
         self.data, self.duration, self.event = self._load_and_normalize(feature_file, label_file)
         self.n_features = self.data.shape[1]
@@ -18,6 +18,7 @@ class METABRICData:
         self.unit_scale = unit_scale
         self.pad_left = pad_left
         self.pad_right = pad_right
+        self.train_ratio = train_ratio
 
         # this merabric dataset from deephit seems to have durations in the unit of days
         # thus no need to scale it
@@ -51,19 +52,33 @@ class METABRICData:
         if self.stratify:
             kf = StratifiedKFold(n_splits=self.kfold, shuffle=True, random_state=self.seed)
             for train_idx, test_idx in kf.split(self.data, self.event):
-                yield METABRICDataset(self, train_idx), METABRICDataset(self, test_idx)
+                yield METABRICDataset(self, train_idx, ratio=self.train_ratio), METABRICDataset(self, test_idx, ratio=1.0)
         else:
             kf = KFold(n_splits=self.kfold, shuffle=True, random_state=self.seed)
             for train_idx, test_idx in kf.split(self.data):
-                yield METABRICDataset(self, train_idx), METABRICDataset(self, test_idx)
-
-
+                yield METABRICDataset(self, train_idx, ratio=self.train_ratio), METABRICDataset(self, test_idx, ratio=1.0)
+                
 class METABRICDataset(Dataset):
-    def __init__(self, metabric_data, indices):
-        self.data = metabric_data.data[indices].astype(np.float32)
-        self.duration = metabric_data.duration[indices].astype(np.int64)
-        self.event = metabric_data.event[indices].astype(np.int64)
-        self.label = metabric_data.label[indices].astype(np.int64)
+    def __init__(self, metabric_data, indices, ratio=1.0):
+        data = metabric_data.data[indices].astype(np.float32)
+        duration = metabric_data.duration[indices].astype(np.int64)
+        event = metabric_data.event[indices].astype(np.int64)
+        label = metabric_data.label[indices].astype(np.int64)
+
+        if ratio < 1.0:
+            data, _, duration, _, event, _, label, _ = train_test_split(
+                data, duration, event, label,
+                train_size=ratio,
+                random_state=metabric_data.seed,
+                shuffle=True,
+                stratify=event
+            )
+
+        self.data = data
+        self.duration = duration
+        self.event = event
+        self.label = label
+
         self.n_features = metabric_data.n_features
         self.n_classes = metabric_data.n_classes
         self.n_events = metabric_data.n_events

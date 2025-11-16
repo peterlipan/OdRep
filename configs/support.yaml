@@ -14,6 +14,7 @@ step: 30. # step for time bin discretization in days
 normalize: False
 pad_left: 1 # number of left padding intervals
 pad_right: 1 # number of right padding intervals
+train_ratio: 1.0
 
 # model
 method: 'ordsurv' # 'ordsurv', 'deephit', 'deepsurv', 'discrete'

@@ -10,13 +10,14 @@ results: './results'
 
 kfold: -1 # use the external validation set
 stratify: True
-step: 1. # step for time bin discretization in days
+step: 365.25 # step for time bin discretization in days
 normalize: False
 pad_left: 1 # number of left padding intervals
 pad_right: 1 # number of right padding intervals
+train_ratio: 1.0
 
 # model
-method: 'angsurv' # 'ordsurv', 'deephit', 'deepsurv', 'nll', 'angsurv'
+method: 'decouple' # 'ordsurv', 'deephit', 'deepsurv', 'nll', 'angsurv'
 backbone: 'MLP'
 n_layers: 2
 d_hid: 2048

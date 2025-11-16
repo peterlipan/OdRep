@@ -65,5 +65,8 @@ def CreateModel(args):
     elif args.method.lower() == 'angsurv':
         from .AngSurv import AngSurv
         return AngSurv(args)
+    elif args.method.lower() == 'pchazard':
+        from .PCHazard import PCHazard
+        return PCHazard(args)
     else:
         raise ValueError(f"Unknown method: {args.method}.")

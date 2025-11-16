@@ -1,147 +1,173 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .backbone import get_encoder
 from .utils import ModelOutputs
 
+class LargeMarginSurvLoss(nn.Module):
+    """
+    Stable combined loss:
+      - Discrete-time NLL on CDF (calibration path)
+      - Pairwise logistic ranking on DOT product with additive margin (stable; no NaNs)
+      - Angular-margin hinge on COSINE (ArcFace/CosFace spirit)
+      - Mild monotonicity penalty on CDF
 
-class CDFLoss(nn.Module):
-    def __init__(self, sigma: float = 0.5, rank_weight: float = 0.1,
-                 margin: float = 0.15, crps_weight: float = 0.05, beta: float = 0.5):
+    Hard-coded, conservative defaults to avoid NaNs from batch 1.
+    """
+    def __init__(self,
+                 rank_weight: float = 0.2,
+                 ang_margin_weight: float = 0.1,
+                 mono_weight: float = 0.05,
+                 margin: float = 0.15,
+                 sigma: float = 0.5,
+                 eps: float = 1e-7):
         super().__init__()
-        self.sigma = sigma
         self.rank_weight = rank_weight
-        self.margin = margin          # cosine-style subtractive margin
-        self.crps_weight = crps_weight
-        self.beta = beta              # Laplace kernel bandwidth (in bins)
-        self._eps = 1e-7
+        self.ang_margin_weight = ang_margin_weight
+        self.mono_weight = mono_weight
+        self.margin = margin
+        self.sigma = max(sigma, 1e-6)  # guard
+        self.eps = eps
 
     @staticmethod
     def pair_rank_mat(idx_durations: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
+        # Comparable if i failed strictly before j, or same bin but j censored; only count i if event
         dur_i = idx_durations.view(-1, 1)
         dur_j = idx_durations.view(1, -1)
         ev_i = events.view(-1, 1)
         ev_j = events.view(1, -1)
         return ((dur_i < dur_j) | ((dur_i == dur_j) & (ev_j == 0))).float() * ev_i
 
-    def rank_loss_on_risk(self, risk: torch.Tensor, durations: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
-        # risk is ANGULAR (cosine) per your last change
-        s_i = risk.view(-1, 1)
-        s_j = risk.view(1, -1)
-        rank_mat = self.pair_rank_mat(durations, events)
-        # cosine margin: (s_i - m) - s_j
-        diff = (s_i - self.margin) - s_j
-        loss = rank_mat * torch.exp(-diff / self.sigma)
-        return loss.sum() / (rank_mat.sum() + 1e-6)
-
     @staticmethod
-    def nll_from_cdf(cdf, label, event, eps=1e-7):
+    def nll_from_cdf(cdf: torch.Tensor, label: torch.Tensor, event: torch.Tensor, eps: float) -> torch.Tensor:
         B, T = cdf.shape
         prevF = torch.cat([cdf.new_zeros(B, 1), cdf[:, :-1]], dim=1)
-        pmf = (cdf - prevF).clamp_min(eps)      # ΔCDF >= 0
-        surv_tail = (1.0 - cdf).clamp_min(eps)  # S(y) >= 0
+        pmf = (cdf - prevF).clamp_min(eps)              # p_k >= eps
+        surv_tail = (1.0 - cdf).clamp_min(eps)          # S(y) >= eps
         idx = torch.arange(B, device=cdf.device)
 
-        py = pmf[idx, label].clamp_min(eps)     # p_y
-        Sy = surv_tail[idx, label]              # S(y)
+        py = pmf[idx, label].clamp_min(eps)             # p_y
+        Sy = surv_tail[idx, label]                      # S(y)
 
-        loss_e = -torch.log(py[event == 1]).mean() if (event == 1).any() else 0.0
-        loss_c = -torch.log(Sy[event == 0]).mean() if (event == 0).any() else 0.0
+        e = event.float() if event.dtype == torch.bool else event
+        loss_e = -torch.log(py[e == 1]).mean() if (e == 1).any() else cdf.new_tensor(0.)
+        loss_c = -torch.log(Sy[e == 0]).mean() if (e == 0).any() else cdf.new_tensor(0.)
         return loss_e + loss_c
 
-    def crps_laplace_uniform(self, cdf: torch.Tensor, label: torch.Tensor, event: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def mono_penalty(cdf: torch.Tensor) -> torch.Tensor:
+        diffs = cdf[:, 1:] - cdf[:, :-1]
+        return F.relu(-diffs).mean()
+
+    def rank_logistic_on_dot(self, s_dot: torch.Tensor, label: torch.Tensor, event: torch.Tensor) -> torch.Tensor:
         """
-        Laplace-kernel CRPS on a UNIFORM bin grid (index distance).
-        Weights w_{ik} ∝ exp(-|k - y_i| / beta), normalized per sample.
-        Event target: step 1[k >= y]; Censored target: 0 for k <= y (conservative).
+        Stable pairwise logistic with additive margin on DOT product:
+          L = mean_{(i,j) in R} softplus( - ( (s_i - s_j) - m ) / sigma )
+        This avoids exp overflow and NaNs on the first batch.
         """
-        B, T = cdf.shape
-        device = cdf.device
-        idx = torch.arange(B, device=device)
-        y = label
-        e = event.float() if event.dtype == torch.bool else event
+        R = self.pair_rank_mat(label, event)  # [B,B]
+        if R.sum() < 1:
+            return s_dot.new_tensor(0.)
 
-        # Distances |k - y_i|
-        ar = torch.arange(T, device=device).view(1, T).expand(B, T)
-        dist = (ar - y.view(-1, 1)).abs().float()
+        si = s_dot.view(-1, 1)
+        sj = s_dot.view(1, -1)
+        diff = (si - sj) - self.margin
+        # Only compute where R==1 to avoid wasting memory; use masked mean
+        loss_mat = F.softplus(-(diff / self.sigma))
+        loss = (loss_mat * R).sum() / (R.sum() + 1e-6)
+        return loss
 
-        # Laplace weights (Δt = 1 for uniform bins)
-        w = torch.exp(-dist / self.beta)
+    def angular_margin_hinge(self, s_cos: torch.Tensor, label: torch.Tensor, event: torch.Tensor) -> torch.Tensor:
+        """
+        ArcFace/CosFace-style angular gap on COSINE:
+          pen = ReLU( m - (cos_i - cos_j) ), averaged over comparable pairs.
+        Keeps geometry well-separated without touching calibration logits.
+        """
+        R = self.pair_rank_mat(label, event)
+        if R.sum() < 1:
+            return s_cos.new_tensor(0.)
 
-        # Mask: events -> all bins; censored -> k <= y
-        mask_cens = (ar <= y.view(-1, 1)).float()
-        mask = torch.where(e.view(-1, 1) > 0.5, torch.ones_like(w), mask_cens)
-
-        # Normalize per sample on active support
-        w = w * mask
-        w_sum = w.sum(dim=1, keepdim=True).clamp_min(self._eps)
-        w = w / w_sum
-
-        # Targets
-        step = (ar >= y.view(-1, 1)).float()
-        target = torch.where(e.view(-1, 1) > 0.5, step, torch.zeros_like(step))
-
-        crps = ((cdf - target) ** 2 * w).sum(dim=1).mean()
-        return crps
+        si = s_cos.view(-1, 1)
+        sj = s_cos.view(1, -1)
+        gap = si - sj
+        pen = F.relu(self.margin - gap)
+        return (pen * R).sum() / (R.sum() + 1e-6)
 
     def forward(self, outputs, data):
-        cdf   = outputs.cdf
-        risk  = outputs.risk      # ANGULAR cosine score (from your updated forward)
-        label = data['label']
-        event = data['event']
+        F_pred = outputs.cdf           # [B,T]
+        s_cos  = outputs.risk_cos      # [B]
+        s_dot  = outputs.risk          # [B] (now dot product)
+        y      = data['label']
+        e      = data['event']
 
-        nll   = self.nll_from_cdf(cdf, label, event)
-        rloss = self.rank_loss_on_risk(risk, label, event)
-        crps  = self.crps_laplace_uniform(cdf, label, event)
+        nll  = self.nll_from_cdf(F_pred, y, e, self.eps)
+        rdot = self.rank_logistic_on_dot(s_dot, y, e)
+        angp = self.angular_margin_hinge(s_cos, y, e)
+        mono = self.mono_penalty(F_pred)
 
-        return nll + self.rank_weight * rloss + self.crps_weight * crps
+        return nll + self.rank_weight * rdot + self.ang_margin_weight * angp + self.mono_weight * mono
 
 
-
+    
 class AngSurv(nn.Module):
     def __init__(self, args):
-        super(AngSurv, self).__init__()
-
-        self.encoder = get_encoder(args)
-        self.d_hid = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
+        super().__init__()
+        self.encoder   = get_encoder(args)
+        self.d_hid     = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
         self.n_classes = args.n_classes
+
         self.head = nn.Linear(self.d_hid, 1, bias=False)
+        nn.init.kaiming_uniform_(self.head.weight, a=math.sqrt(5))
 
-        self.biases = nn.Parameter(torch.linspace(-1, 1, self.n_classes), requires_grad=True)
+        # KEEP ONLY THIS: thresholds for calibration
+        self.biases = nn.Parameter(torch.linspace(-1, 1, self.n_classes))
 
-        self.criterion = CDFLoss()
-        self.scaler = nn.Parameter(2. * torch.ones(1))  # Scale for logits
+        self.temp   = nn.Linear(1, 1)                 # tau from radius input
+        self.scaler = nn.Parameter(torch.tensor(2.0)) # global scale
+
         self._eps = 1e-7
+        self.criterion = LargeMarginSurvLoss()
+
+    @staticmethod
+    def _tau_from_radius(r: torch.Tensor) -> torch.Tensor:
+        # r is [B,1]; temp(r) returns [B,1]; softplus -> positive; clamp for stability
+        return torch.clamp(F.softplus(r), min=1e-3, max=5.0)
 
     def forward(self, data):
         x = data['data']
+        feats = self.encoder(x)                                     # [B,D]
+        r = feats.norm(dim=1, keepdim=True).clamp_min(1e-6)         # [B,1]
+        u = feats / r                                               # [B,D]
+        w_hat = F.normalize(self.head.weight, dim=1)                # [1,D]
 
-        # Encode
-        features = self.encoder(x)  # [B, D]
+        # Scores
+        s_cos = (u @ w_hat.t()).view(-1)                            # cosine
+        s_dot = (feats @ w_hat.t()).view(-1)                        # dot = r * cos
 
-        # --- calibration path (dot product with raw head) ---
-        proj = self.head(features)  # [B, 1]  uses raw weight -> keeps magnitude for NLL/CRPS
-        logits = proj + self.biases.view(1, -1)  # [B, T]
-        cdf = torch.sigmoid(logits * self.scaler).clamp(1e-7, 1 - 1e-7)
+        # Calibration logits: (s_dot + b_k) * scaler * tau
+        tau_in = self.temp(r)                                       # [B,1]
+        tau    = self._tau_from_radius(tau_in)                      # [B,1]
+        logits = (s_dot.view(-1,1) + self.biases.view(1,-1)) * (self.scaler * tau)  # [B,T]
+        cdf = torch.sigmoid(logits).clamp(self._eps, 1.0 - self._eps)
+        surv = 1.0 - cdf
+
         if not self.training:
             cdf = torch.cummax(cdf, dim=1).values.clamp_(min=self._eps, max=1.0 - self._eps)
-        surv = 1. - cdf
+            surv = 1.0 - cdf
 
-        # --- ranking path (angular / cosine) ---
-        w_hat = F.normalize(self.head.weight, dim=1)          # [1, D], unit head
-        radius = features.norm(dim=1, keepdim=True).clamp_min(1e-6)
-        u = features / radius.detach()                        # unit direction; stop-grad on radius
-        s_ang = (u @ w_hat.t()).view(-1)                      # [B], cosine-based risk in [-1,1]
-
-        return ModelOutputs(features=features,
-                            logits=logits,
-                            cdf=cdf,
-                            risk=s_ang,                       # <-- angular score for ranking
-                            surv=surv,
-                            biases=self.biases,
-                            projection_weight=self.head.weight.view(-1),
-                            radius=radius.view(-1))
-
+        return ModelOutputs(
+            features=feats,
+            logits=logits,
+            cdf=cdf,
+            surv=surv,
+            risk=s_dot,          # <- ranking loss & reported scalar use DOT
+            risk_cos=s_cos,      # <- for angular-margin regularizer & diagnostics
+            biases=self.biases,
+            projection_weight=w_hat.view(-1),
+            radius=r.view(-1),
+            tau=tau.view(-1),
+        )
 
     def compute_loss(self, outputs, data):
         return self.criterion(outputs, data)

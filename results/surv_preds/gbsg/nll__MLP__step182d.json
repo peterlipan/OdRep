@@ -1,0 +1,27 @@
+{
+  "model_name": "nll_MLP",
+  "dataset": "gbsg",
+  "discretization_step_days": 182.625,
+  "times_days_eff": [
+    182.625,
+    365.25,
+    547.875,
+    730.5,
+    913.125,
+    1095.75,
+    1278.375,
+    1461.0,
+    1643.625,
+    1826.25,
+    2008.875,
+    2191.5,
+    2374.125,
+    2556.75,
+    2739.375
+  ],
+  "right_continuous": true,
+  "n_bins_eff": 15,
+  "pad_left": 1,
+  "pad_right": 1,
+  "horizon_days": 2739.375
+}

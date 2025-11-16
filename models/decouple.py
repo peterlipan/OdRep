@@ -6,8 +6,8 @@ from .utils import ModelOutputs
 
 
 class CDFLoss(nn.Module):
-    def __init__(self, sigma: float = 0.5, rank_weight: float = 0.1, mono_weight: float = 0.1,
-                 margin: float = 0.1):
+    def __init__(self, sigma: float = 0.5, rank_weight: float = 0.5, mono_weight: float = 0.5,
+                 margin: float = 0.3):
         super().__init__()
         self.sigma = sigma
         self.rank_weight = rank_weight
@@ -56,9 +56,10 @@ class CDFLoss(nn.Module):
         risk   = outputs.risk
         label  = data['label']
         event  = data['event']
+        duration = data['duration']
 
         nll   = self.nll_from_cdf(F_pred, label, event)
-        rloss = self.rank_loss_on_risk(risk, label, event)
+        rloss = self.rank_loss_on_risk(risk, duration, event)
         mloss = self.monotonicity_loss(F_pred)
         return nll + self.rank_weight * rloss + self.mono_weight * mloss
 
@@ -107,12 +108,11 @@ class Decouple(nn.Module):
         cdf    = torch.sigmoid(logits)                                     # [B,T]
         # --- Decoupling ends here ---
 
-        surv = 1. - cdf
-
         # force monotonicity only during eval
         if not self.training:
             cdf = torch.cummax(cdf, dim=1).values.clamp_(min=self._eps, max=1.0 - self._eps)
-            surv = 1.0 - cdf
+
+        surv = 1.0 - cdf
         risk = s_ang.view(-1)       # ranking uses angles only
 
         return ModelOutputs(features=features,

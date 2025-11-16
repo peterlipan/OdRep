@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
+from sklearn.model_selection import train_test_split
 
 
 class RotterdamGBSGData:
-    def __init__(self, step=1.0, seed=42, pad_left=1, pad_right=1):
+    def __init__(self, step=1.0, seed=42, pad_left=1, pad_right=1, train_ratio=1.0):
         """
         Combined Rotterdam and GBSG dataset class
         Rotterdam is used as training set, GBSG as external validation
@@ -25,6 +26,7 @@ class RotterdamGBSGData:
         self.step = step
         self.pad_left = pad_left
         self.pad_right = pad_right
+        self.train_ratio = train_ratio
         
         # Convert duration to labels
         self.rotterdam_label = self._duration_to_label(self.rotterdam_duration)
@@ -129,7 +131,8 @@ class RotterdamGBSGData:
             label=self.rotterdam_label,
             n_features=self.n_features,
             n_classes=self.n_classes,
-            n_events=self.n_events
+            n_events=self.n_events,
+            ratio=self.train_ratio
         )
         
         test_dataset = SurvivalDataset(
@@ -140,14 +143,15 @@ class RotterdamGBSGData:
             label=self.gbsg_label,
             n_features=self.n_features,
             n_classes=self.n_classes,
-            n_events=self.n_events
+            n_events=self.n_events,
+            ratio=1.0
         )
         
         return train_dataset, test_dataset
 
 
 class SurvivalDataset(Dataset):
-    def __init__(self, parent_data, data, duration, event, label, n_features, n_classes, n_events):
+    def __init__(self, parent_data, data, duration, event, label, n_features, n_classes, n_events, ratio=1.0):
         """
         Survival dataset for PyTorch DataLoader
         
@@ -161,6 +165,14 @@ class SurvivalDataset(Dataset):
             n_classes: Number of time bins
             n_events: Number of event types
         """
+        if ratio < 1.0:
+            data, _, duration, _, event, _, label, _ = train_test_split(
+                data, duration, event, label,
+                train_size=ratio,
+                random_state=parent_data.seed,
+                shuffle=True,
+                stratify=event
+            )
         self.data = data.astype(np.float32)
         self.duration = duration.astype(np.int64)
         self.event = event.astype(np.int64)

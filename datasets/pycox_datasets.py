@@ -2,14 +2,14 @@ import torch
 import pycox
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from torch.utils.data import Dataset
 from pycox.datasets import metabric, support, gbsg, flchain, nwtco, sac3, rr_nl_nhp, sac_admin5
 
 
 class PycoxDataset:
     def __init__(self, pycox_dataloader, step=1.0, stratify=False, 
-                 kfold=5, seed=42, normalize=False, unit_scale=1.0, pad_left=1, pad_right=1):
+                 kfold=5, seed=42, normalize=False, unit_scale=1.0, pad_left=1, pad_right=1, train_ratio=1.0):
         self.pycox_dataloader = pycox_dataloader
         self.df = self._load_df()
         self.data, self.duration, self.event = self._preprocess_data(normalize=normalize)
@@ -22,6 +22,7 @@ class PycoxDataset:
         self.pad_left = pad_left
         self.pad_right = pad_right
         self.unit_scale = unit_scale
+        self.train_ratio = train_ratio
 
         # rescale the duration to unit of days
         self.duration = (self.duration * unit_scale).astype(np.float32)
@@ -53,19 +54,30 @@ class PycoxDataset:
         if self.stratify:
             kf = StratifiedKFold(n_splits=self.kfold, shuffle=True, random_state=self.seed)
             for train_idx, test_idx in kf.split(self.data, self.event):
-                yield PytorchDataset(self, train_idx), PytorchDataset(self, test_idx)
+                yield PytorchDataset(self, train_idx, ratio=self.train_ratio), PytorchDataset(self, test_idx, ratio=1.0)
         else:
             kf = KFold(n_splits=self.kfold, shuffle=True, random_state=self.seed)
             for train_idx, test_idx in kf.split(self.data):
-                yield PytorchDataset(self, train_idx), PytorchDataset(self, test_idx)
+                yield PytorchDataset(self, train_idx, ratio=self.train_ratio), PytorchDataset(self, test_idx, ratio=1.0)
 
-
+                
 class PytorchDataset(Dataset):
-    def __init__(self, pycox_data, indices):
-        self.duration = pycox_data.duration[indices]
-        self.event = pycox_data.event[indices]
-        self.data = pycox_data.data[indices]
-        self.label = pycox_data.label[indices]
+    def __init__(self, pycox_data, indices, ratio=1.0):
+        duration = pycox_data.duration[indices]
+        event = pycox_data.event[indices]
+        data = pycox_data.data[indices]
+        label = pycox_data.label[indices]
+
+        if ratio < 1.0:
+            data, _, label, _, duration, _, event, _ = train_test_split(
+                data, label, duration, event, train_size=ratio, random_state=pycox_data.seed, stratify=event
+            )
+        
+        self.data = data
+        self.label = label
+        self.event = event
+        self.duration = duration
+
         self.n_features = pycox_data.n_features
         self.n_classes = pycox_data.n_classes
         self.n_events = pycox_data.n_events
@@ -86,20 +98,20 @@ class PytorchDataset(Dataset):
 # this raw data needs to be cleaned. Use deephit's instead.
 class MetabricDataset(PycoxDataset):
     # the durations are in the unit of months
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
-        super().__init__(metabric, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1, train_ratio=1.0):
+        super().__init__(metabric, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right, train_ratio=train_ratio)
 
 class SupportDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
-        super().__init__(support, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1, train_ratio=1.0):
+        super().__init__(support, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right, train_ratio=train_ratio)
 
 class GBSGDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
-        super().__init__(gbsg, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1, train_ratio=1.0):
+        super().__init__(gbsg, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=30.4375, pad_left=pad_left, pad_right=pad_right, train_ratio=train_ratio)
 
 class FlchainDataset(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
-        super().__init__(flchain, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1, train_ratio=1.0):
+        super().__init__(flchain, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right, train_ratio=train_ratio)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)
@@ -109,8 +121,8 @@ class FlchainDataset(PycoxDataset):
         return df
 
 class NWTCODataSet(PycoxDataset):
-    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1):
-        super().__init__(nwtco, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right)
+    def __init__(self, step=1., stratify=False, kfold=5, seed=42, normalize=False, pad_left=1, pad_right=1, train_ratio=1.0):
+        super().__init__(nwtco, step=step, stratify=stratify, kfold=kfold, seed=seed, normalize=normalize, unit_scale=1.0, pad_left=pad_left, pad_right=pad_right, train_ratio=train_ratio)
 
     def _load_df(self):
         df = self.pycox_dataloader.read_df(processed=False)

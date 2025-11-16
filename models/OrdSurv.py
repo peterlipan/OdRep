@@ -6,49 +6,57 @@ from .utils import ModelOutputs
 
 
 class CDFLoss(nn.Module):
-    def __init__(self, sigma: float = 0.5, rank_weight: float = 0.1):
+    def __init__(self, 
+                 cdf_weight: float = 1.,
+                 monotonic_weight: float = 0.1,
+                 sigma: float = 0.5,
+                 margin: float = 0.1,
+                 rank_weight: float = 0.1,
+                 gamma: float = 0.5):
         super().__init__()
         self.sigma = sigma
+        self.cdf_weight = cdf_weight
+        self.monotonic_weight = monotonic_weight
+        self.margin = margin
         self.rank_weight = rank_weight
+        self.gamma = gamma
 
-    @staticmethod
-    def pair_rank_mat(idx_durations: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
-        dur_i = idx_durations.view(-1, 1)
-        dur_j = idx_durations.view(1, -1)
-        ev_i = events.view(-1, 1)
-        ev_j = events.view(1, -1)
-        return ((dur_i < dur_j) | ((dur_i == dur_j) & (ev_j == 0))).float() * ev_i
-
-    def rank_loss_on_risk(self, risk: torch.Tensor, durations: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
-        diff_risk = risk.view(-1, 1) - risk.view(1, -1)
-        rank_mat = self.pair_rank_mat(durations, events)
-        loss = rank_mat * torch.exp(-diff_risk / self.sigma)
+    def rank_loss_on_score(self, score: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        label_i = label.view(-1, 1)
+        label_j = label.view(1, -1)
+        rank_mat = (label_i < label_j).float()
+        diff_score = score.view(-1, 1) - score.view(1, -1)
+        loss = rank_mat * torch.exp(-diff_score / self.sigma)
         return loss.sum() / (rank_mat.sum() + 1e-6)
-
-    @staticmethod
-    def nll_from_cdf(cdf, label, event, eps=1e-7):
-        B, T = cdf.shape
-        prevF = torch.cat([cdf.new_zeros(B, 1), cdf[:, :-1]], dim=1)
-        pmf = (cdf - prevF).clamp_min(eps)        # p_k >= 0
-        surv_tail = (1.0 - cdf).clamp_min(eps)    # S(y) >= 0
-        idx = torch.arange(B, device=cdf.device)
-
-        py = pmf[idx, label].clamp_min(eps)       # p_y
-        Sy = surv_tail[idx, label]                # S(y)
-
-        loss_e = -torch.log(py[event == 1]).mean() if (event == 1).any() else 0.0
-        loss_c = -torch.log(Sy[event == 0]).mean() if (event == 0).any() else 0.0
-        return loss_e + loss_c
 
     def forward(self, outputs, data):
         F_pred = outputs.cdf
-        risk   = outputs.risk
-        label  = data['label']
-        event  = data['event']
+        score = outputs.risk
 
-        nll   = self.nll_from_cdf(F_pred, label, event)
-        rloss = self.rank_loss_on_risk(risk, label, event)
-        return nll + self.rank_weight * rloss
+        label = data['label']
+
+        _, C = F_pred.shape # C: number of classes
+        device = F_pred.device
+
+        label_idx = torch.arange(C, device=device).view(1, -1)
+        label_exp = label.view(-1, 1)
+        target = (label_idx >= label_exp).float()
+        distance = (label_idx - label_exp).abs().float()
+        decay_weight = torch.exp(-self.gamma * distance)
+
+        cdf_loss = ((F_pred - target) ** 2 * decay_weight).sum() / (decay_weight.sum() + 1e-6)
+
+        monotonic_penalty = F.relu(F_pred[:, :-1] - F_pred[:, 1:] + self.margin).mean()
+
+        rank_loss = self.rank_loss_on_score(score, label)
+
+        total_loss = (
+            self.cdf_weight * cdf_loss +
+            self.monotonic_weight * monotonic_penalty +
+            self.rank_weight * rank_loss
+        )
+
+        return total_loss
 
 
 class OrdSurv(nn.Module):

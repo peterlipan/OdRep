@@ -390,8 +390,8 @@ class Trainer:
         df_name = f"{args.kfold}Fold_{args.dataset}.xlsx"
         res_path = args.results
 
-        settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Step (days)', 'Layers', 'Hidden Dim', 'Activation']
-        kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed', 'step', 'n_layers', 'd_hid', 'activation']
+        settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Step (days)', 'Train Ratio', 'Layers', 'Hidden Dim', 'Activation']
+        kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed', 'step', 'train_ratio', 'n_layers', 'd_hid', 'activation']
 
         set2kwargs = {k: v for k, v in zip(settings, kwargs )}
 

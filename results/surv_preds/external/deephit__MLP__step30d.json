@@ -1,0 +1,32 @@
+{
+  "model_name": "deephit_MLP",
+  "dataset": "external",
+  "discretization_step_days": 30.4375,
+  "times_days_eff": [
+    30.4375,
+    60.875,
+    91.3125,
+    121.75,
+    152.1875,
+    182.625,
+    213.0625,
+    243.5,
+    273.9375,
+    304.375,
+    334.8125,
+    365.25,
+    395.6875,
+    426.125,
+    456.5625,
+    487.0,
+    517.4375,
+    547.875,
+    578.3125,
+    608.75
+  ],
+  "right_continuous": true,
+  "n_bins_eff": 20,
+  "pad_left": 1,
+  "pad_right": 1,
+  "horizon_days": 608.75
+}

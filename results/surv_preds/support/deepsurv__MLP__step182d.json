@@ -1,0 +1,24 @@
+{
+  "model_name": "deepsurv_MLP",
+  "dataset": "support",
+  "discretization_step_days": 182.625,
+  "times_days_eff": [
+    182.625,
+    365.25,
+    547.875,
+    730.5,
+    913.125,
+    1095.75,
+    1278.375,
+    1461.0,
+    1643.625,
+    1826.25,
+    2008.875,
+    2191.5
+  ],
+  "right_continuous": true,
+  "n_bins_eff": 12,
+  "pad_left": 1,
+  "pad_right": 1,
+  "horizon_days": 2191.5
+}
