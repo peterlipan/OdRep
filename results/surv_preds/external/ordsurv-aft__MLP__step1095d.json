@@ -1,0 +1,19 @@
+{
+  "model_name": "ordsurv-aft_MLP",
+  "dataset": "external",
+  "discretization_step_days": 1095.75,
+  "times_days_eff": [
+    1095.75,
+    2191.5,
+    3287.25,
+    4383.0,
+    5478.75,
+    6574.5,
+    7670.25
+  ],
+  "right_continuous": true,
+  "n_bins_eff": 7,
+  "pad_left": 1,
+  "pad_right": 1,
+  "horizon_days": 7670.25
+}

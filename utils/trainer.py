@@ -64,14 +64,13 @@ class Trainer:
         self.train()
         metric_dict = self.validate()
         self.m_logger.update(metric_dict)
-        if self.verbose:
-            print('-'*20, 'Metrics', '-'*20)
+        print('-'*20, 'Metrics', '-'*20)
         print(metric_dict)
         if args.method == 'deepcdf' and args.n_bins > 0:
             self._fold_plot_2d(metric_dict, self.test_loader, training_set=False)
             self._fold_plot_2d(metric_dict, self.train_loader, training_set=True)
-        self._save_fold_avg_results(metric_dict)
-        self.save_survival_predictions(self.test_loader, split="test")
+        self._save_fold_surv_avg_results(metric_dict)
+        # self.save_survival_predictions(self.test_loader, split="test")
 
     def kfold_train(self):
         args = self.args
@@ -89,17 +88,16 @@ class Trainer:
             # validate for the fold
             metric_dict = self.validate()
             self.m_logger.update(metric_dict, fold)
-            if self.verbose:
-                print('-'*20, f'Fold {fold} Metrics', '-'*20)
+            print('-'*20, f'Fold {fold} Metrics', '-'*20)
             print(metric_dict)
-            self.save_survival_predictions(self.test_loader, split="oof")
+            # self.save_survival_predictions(self.test_loader, split="oof")
 
             # self.fold_univariate_cox_regression_analysis(args, fold)
 
         avg_metrics = self.m_logger.fold_average()
         print('-'*20, 'Average Metrics', '-'*20)
         print(avg_metrics)
-        self._save_fold_avg_results(avg_metrics)
+        self._save_fold_surv_avg_results(avg_metrics)
 
     def run(self):
         args = self.args
@@ -146,32 +144,8 @@ class Trainer:
                                 'Test': metric_dict
                             }})
 
-    def cls_validate(self):
-        args = self.args
-        training = self.model.training
 
-        loss = 0.0
-
-        ground_truth = torch.Tensor().cuda()
-        predictions = torch.Tensor().cuda()
-
-        with torch.no_grad():
-            self.model.eval()
-            for data in self.test_loader:
-                data = {k: v.cuda(non_blocking=True) if hasattr(v, 'cuda') else v for k, v in data.items()}
-                outputs = self.model(data)
-                batch_loss = self.model.compute_loss(outputs, data)
-                loss += batch_loss.item()
-
-                ground_truth = torch.cat((ground_truth, data['label']), dim=0)
-                predictions = torch.cat((predictions, outputs.y_pred), dim=0)
-            alpha = getattr(args, 'alpha', 0.5)
-            metric_dict = ordinal_metrics(ground_truth, predictions, alpha)
-            metric_dict['Loss'] = loss / len(self.test_loader)
-        self.model.train(training)
-        return metric_dict
-
-    def surv_validate(self):
+    def validate(self):
         args = self.args
         training = self.model.training
         self.model.eval()
@@ -223,8 +197,8 @@ class Trainer:
                 max_time = duration.max()  # no censoring case
 
             # Sample times within [min_time, max_time]
-            eval_step = args.step  # keep consistent with training
-            time_points = np.arange(min_time, max_time + 1e-12, eval_step, dtype=float)
+            N_eval = 1000 
+            time_points = np.linspace(min_time, max_time, N_eval, dtype=float)
             time_labels = self.test_dataset._duration_to_label(time_points)
             surv_prob = surv_prob[:, time_labels]
 
@@ -235,16 +209,6 @@ class Trainer:
 
         return metric_dict
     
-    def validate(self):
-        args = self.args
-        if args.task.lower() == 'classification':
-            metric_dict = self.cls_validate()
-        elif args.task.lower() == 'survival':
-            metric_dict = self.surv_validate()
-        else:
-            raise ValueError(f"Unknown task: {args.task}. Supported tasks are: classification, survival.")
-
-        return metric_dict
     
     @torch.no_grad()
     def save_survival_predictions(self, dataloader, split: str = "test"):
@@ -423,54 +387,6 @@ class Trainer:
         df = df._append(new_row, ignore_index=True)
         df.to_excel(df_path, index=False)
         
-    def _save_fold_cls_avg_results(self, metric_dict, keep_best=True):
-        # keep_best: whether save the best model (highest mcc) for each fold
-        args = self.args
-        df_name = f"{args.kfold}Fold_{args.dataset}_Classification.xlsx"
-        res_path = args.results
-
-        settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed']
-        kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed']
-
-        set2kwargs = {k: v for k, v in zip(settings, kwargs )}
-
-        metric_names = self.m_logger.metrics()
-        df_columns = settings + metric_names
-        
-        df_path = os.path.join(res_path, df_name)
-        if not os.path.exists(df_path):
-            df = pd.DataFrame(columns=df_columns)
-        else:
-            df = pd.read_excel(df_path)
-            if df_columns != df.columns.tolist():
-                warnings.warn("Columns in the existing excel file do not match the current settings.")
-                df = pd.DataFrame(columns=df_columns)
-        
-        new_row = {k: args.__dict__[v] for k, v in set2kwargs.items()}
-
-        if keep_best:
-            reference = 'Acc'
-            existing_rows = df[(df[settings] == pd.Series(new_row)).all(axis=1)]
-            if not existing_rows.empty:
-                existing_acc = existing_rows[reference].values
-                if metric_dict[reference] > existing_acc:
-                    df = df.drop(existing_rows.index)
-                else:
-                    return
-
-        new_row.update(metric_dict)
-        df = df._append(new_row, ignore_index=True)
-        df.to_excel(df_path, index=False)
-
-    def _save_fold_avg_results(self, metric_dict):
-        # save the average results for each fold
-        args = self.args
-        if args.task.lower() == 'classification':
-            self._save_fold_cls_avg_results(metric_dict)
-        elif args.task.lower() == 'survival':
-            self._save_fold_surv_avg_results(metric_dict)
-        else:
-            raise ValueError(f"Unknown task: {args.task}. Supported tasks are: classification, survival.")
 
     def fold_univariate_cox_regression_analysis(self):
         args = self.args

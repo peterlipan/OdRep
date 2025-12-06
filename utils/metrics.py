@@ -101,6 +101,8 @@ def compute_cls_metrics(ground_truth, activations, avg='micro', demical_places=4
 
 
 def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
+    eps = 1e-12
+
     # ---- Plain C-index (full data) ----
     cindex, *_ = concordance_index_censored(
         test_surv["event"], test_surv["time"], risk_prob
@@ -114,7 +116,10 @@ def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
         max_censor_time = test_ipcw["time"][censor_mask].max()
         drop_mask = (test_ipcw["event"]) & (test_ipcw["time"] >= max_censor_time)
         if drop_mask.any():
-            print(f"\n[Warning] Dropping {drop_mask.sum()} event(s) at/after censoring max={max_censor_time} for IPCW-based metrics.")
+            print(
+                f"\n[Warning] Dropping {drop_mask.sum()} event(s) at/after censoring "
+                f"max={max_censor_time} for IPCW-based metrics."
+            )
             test_ipcw = test_ipcw[~drop_mask]
             risk_ipcw = risk_ipcw[~drop_mask]
             surv_ipcw = surv_ipcw[~drop_mask]
@@ -134,11 +139,56 @@ def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
     if np.isnan(mean_auc):
         raise ValueError("AUC is NaN — check survival probabilities or time points.")
 
+    # ==========================================================
+    # ---- Right-censored Negative Log-Likelihood (NLL_rc) ----
+    # ==========================================================
+    # Ensure survival probabilities are valid
+    S = np.clip(surv_ipcw, eps, 1.0)
+    # Enforce monotone decreasing survival (important if the model is noisy)
+    S = np.minimum.accumulate(S, axis=1)
+
+    # Previous survival (S_{t-1}), S_prev[:,0] = 1
+    S_prev = np.concatenate([np.ones((S.shape[0], 1)), S[:, :-1]], axis=1)
+    S_prev = np.clip(S_prev, eps, 1.0)
+
+    # hazards: h = 1 - S_k / S_{k-1}
+    h = 1.0 - (S / S_prev)
+    h = np.clip(h, eps, 1 - eps)
+
+    log_1mh = np.log(1.0 - h)
+    log_h = np.log(h)
+
+    times_i = test_ipcw["time"]
+    events_i = test_ipcw["event"]
+
+    # find index of time interval for each subject
+    idx = np.searchsorted(times, times_i, side="right") - 1
+    idx = np.clip(idx, 0, len(times) - 1).astype(int)
+
+    logL = np.zeros(len(test_ipcw), dtype=float)
+
+    for i in range(len(test_ipcw)):
+        k = idx[i]
+        if events_i[i]:
+            # event at interval k: survive until k-1, fail at k
+            if k > 0:
+                logL[i] = log_1mh[i, :k].sum() + log_h[i, k]
+            else:
+                logL[i] = log_h[i, 0]
+        else:
+            # censored at interval k: survive until k
+            logL[i] = log_1mh[i, : (k + 1)].sum()
+
+    NLL_rc = float(-logL.mean())
+    n_steps = len(times)
+    NLL_per_step = NLL_rc / max(n_steps, 1)
+
     # ---- Collect metrics ----
     metrics = {
         "C-index": cindex,
         "C-index IPCW": cindex_ipcw,
         "AUC": mean_auc,
         "IBS": ibs,
+        "NLL": NLL_per_step,
     }
     return metrics

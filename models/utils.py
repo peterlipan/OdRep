@@ -29,30 +29,15 @@ def CreateModel(args):
     if args.method.lower() == 'deephit':
         from .DeepHit import DeepHit
         return DeepHit(args)
-    elif args.method.lower() == 'ordsurv':
+    elif args.method.lower().startswith('ordsurv'):
         from .OrdSurv import OrdSurv
-        return OrdSurv(args)
+        return OrdSurv(args, link=args.method.lower().split('-')[1] if '-' in args.method else 'po')
     elif args.method.lower() == 'deepsurv':
         from .DeepSurv import DeepSurv
         return DeepSurv(args)
-    elif args.method.lower() == 'nll':
-        from .NLLSurv import NllSurv
-        return NllSurv(args)
-    elif args.method.lower() == 'angularord':
-        from .AngularOrd import AngularOrdRep
-        return AngularOrdRep(args)
-    elif args.method.lower() == 'ordsoftmax':
-        from .OrdSoftmax import OrdSoftmax
-        return OrdSoftmax(args)
-    elif args.method.lower() == 'vmf':
-        from .vmf import VmfOrdinalModel
-        return VmfOrdinalModel(args)
-    elif args.method.lower() == 'softmax':
-        from .Softmax import SoftmaxClassifier
-        return SoftmaxClassifier(args)
-    elif args.method.lower() == 'ordcls':
-        from .OrdCls import OrdCls
-        return OrdCls(args)
+    elif args.method.lower() == 'logistichazards':
+        from .LogisticHazards import LogisticHazards
+        return LogisticHazards(args)
     elif args.method.lower() == 'lassocox':
         from .LassoCox import LassoCox
         return LassoCox(args)
@@ -62,11 +47,14 @@ def CreateModel(args):
     elif args.method.lower() == 'decouple':
         from .decouple import Decouple
         return Decouple(args)
-    elif args.method.lower() == 'angsurv':
-        from .AngSurv import AngSurv
-        return AngSurv(args)
     elif args.method.lower() == 'pchazard':
         from .PCHazard import PCHazard
         return PCHazard(args)
+    elif args.method.lower() == 'nmtlr':
+        from .NMTLR import NMTLR
+        return NMTLR(args)
+    elif args.method.lower() == 'cqrnn':
+        from .CQRNN import CQRNN
+        return CQRNN(args)
     else:
         raise ValueError(f"Unknown method: {args.method}.")

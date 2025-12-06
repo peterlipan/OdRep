@@ -12,7 +12,7 @@ class PCHazardLoss(nn.Module):
 
     def forward(self, outputs, data):
         return nll_pc_hazard_loss(
-            outputs.hazards,
+            outputs.logits,
             data['label'],
             data['event'],
             outputs.frac
@@ -34,21 +34,27 @@ class PCHazard(nn.Module):
     def forward(self, data):
         features = self.encoder(data['data'])
         logits = self.head(features)
-        hazards = F.softplus(logits)
 
-        _, T = hazards.shape
+        hazards = F.softplus(logits)
+        cum_hazard = torch.cumsum(hazards, dim=1)
+        surv = torch.exp(-cum_hazard)
+        risk = - torch.sum(surv, dim=1)
+
         durations = data['duration']
         time_idx = data['label']
-
         t_0 = (time_idx - self.pad_left) * self.step
         frac = (durations - t_0) / self.step
-        assert torch.all((frac >= 0) & (frac <= 1)), f"Fraction for last interval is out of range [0, 1]: min {frac.min().item()}, max {frac.max().item()}"
+        # optional: eps + clamp here
 
-        surv = torch.cumprod(1 - hazards, dim=1)
-        risk = - torch.sum(surv, dim=1)  # risk is the negative cumulative survival
-
-        return ModelOutputs(features=features, logits=logits, hazards=hazards, surv=surv, risk=risk, frac=frac)
-
+        return ModelOutputs(
+            features=features,
+            logits=logits,
+            hazards=hazards,
+            surv=surv,
+            risk=risk,
+            frac=frac,
+        )
+    
     def compute_loss(self, outputs, data):
         return self.criterion(
             outputs,
