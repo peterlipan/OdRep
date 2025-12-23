@@ -1,103 +1,68 @@
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, balanced_accuracy_score, \
-    roc_auc_score, precision_score, matthews_corrcoef, cohen_kappa_score, average_precision_score
-from imblearn.metrics import sensitivity_score, specificity_score
 from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc, integrated_brier_score, concordance_index_ipcw
 
 
-def ordinal_metrics(y_true, y_pred, alpha=0.5):
+def discrete_rc_nll(events, labels, surv_bins, eps=1e-12):
     """
-    Compute ordinal-aware metrics:
-      - Acc: Exact accuracy
-      - AdjAcc: Accuracy within ±1 grade
-      - NAER: Non-adjacent error rate (>1 grade apart)
-      - OAS: Ordinal accuracy score (partial credit for adjacent errors)
-      - MAE: Mean absolute error in grade units
+    Right-censored NLL on dataset's discrete time bins.
+
     Parameters
     ----------
-    y_true : array-like, shape (n_samples,)
-        True ordinal labels (ints)
-    y_pred : array-like, shape (n_samples,)
-        Predicted ordinal labels (ints)
-    alpha : float, optional (default=0.5)
-        Partial credit for adjacent errors in OAS.
+    events    : array-like, shape (n,)
+        Boolean or {0,1}. True/1 = event, False/0 = censored.
+    labels    : array-like, shape (n,)
+        Integer bin indices in [0, K-1], as used in training (data['label']).
+    surv_bins : array-like, shape (n, K)
+        Predicted survival probabilities at the end of each bin.
+        This is outputs.surv evaluated on the dataset's K bins.
+
+    eps : float
+        Small constant to avoid log(0) or log of negative due to numerical issues.
+
     Returns
     -------
-    dict
-        Dictionary with metrics.
+    NLL_rc      : float
+        Mean negative log-likelihood over all test samples.
+    NLL_per_bin : float
+        NLL_rc divided by K (optional normalization for comparability if K differs).
     """
-    y_true = y_true.cpu().detach().numpy()
-    y_pred = y_pred.cpu().detach().numpy()
+    events = np.asarray(events, dtype=bool)
+    labels = np.asarray(labels, dtype=int).reshape(-1)
+    S = np.asarray(surv_bins, dtype=float)
 
-    # Absolute distance in ordinal scale
-    dist = np.abs(y_pred - y_true)
+    n, K = S.shape
+    assert labels.shape[0] == n
+    assert labels.min() >= 0 and labels.max() < K
 
-    # Exact accuracy
-    acc = np.mean(dist == 0)
+    # S_prev_i = S_i(label_i - 1) for label>0, else 1 for label=0
+    S_prev = np.ones(n, dtype=float)
+    mask_gt0 = labels > 0
+    S_prev[mask_gt0] = S[mask_gt0, labels[mask_gt0] - 1]
 
-    # Adjacent accuracy (exact or ±1)
-    adj_acc = np.mean(dist <= 1)
+    # S_curr_i = S_i(label_i)
+    S_curr = S[np.arange(n), labels]
 
-    # Non-adjacent error rate (> ±1)
-    naer = np.mean(dist > 1)
+    # Event probability: P(T in bin y) = S_prev - S_curr
+    prob_event = S_prev - S_curr
 
-    # Ordinal Accuracy Score
-    oas = np.mean(np.where(dist == 0, 1,
-                  np.where(dist == 1, alpha, 0)))
+    # Censor probability: P(T > end of bin y) = S_curr
+    prob_cens = S_curr.copy()
 
-    # Mean absolute error
-    mae = np.mean(dist)
+    # Numerical safety only: clip to [eps, 1] so log() is defined
+    prob_event = np.clip(prob_event, eps, 1.0)
+    prob_cens  = np.clip(prob_cens,  eps, 1.0)
 
-    return {
-        "Acc": acc,
-        "AdjAcc": adj_acc,
-        "NAER": naer,
-        f"OAS(alpha={alpha})": oas,
-        "MAE": mae
-    }
+    # Build per-sample likelihood
+    events_f = events.astype(float)
+    prob = events_f * prob_event + (1.0 - events_f) * prob_cens
 
+    # Final NLL
+    logL = np.log(prob)
+    NLL_rc = float(-logL.mean())
+    NLL_per_bin = NLL_rc / float(K)
 
-def compute_cls_metrics(ground_truth, activations, avg='micro', demical_places=4):
+    return NLL_rc, NLL_per_bin
 
-    ground_truth = ground_truth.cpu().detach().numpy()
-    activations = activations.cpu().detach().numpy()
-    predictions = np.argmax(activations, -1)
-
-    multi_class = 'ovr'
-    ill_avg = avg
-    # For binary classification
-    if activations.shape[1] == 2:
-        activations = activations[:, 1]
-        multi_class = 'raise'
-        # binary average is illegal for auc
-        ill_avg = None
-        avg = 'binary'
-
-    mean_acc = accuracy_score(y_true=ground_truth, y_pred=predictions)
-    f1 = f1_score(y_true=ground_truth, y_pred=predictions, average=avg)
-
-    try:
-        auc = roc_auc_score(y_true=ground_truth, y_score=activations, multi_class=multi_class, average=ill_avg)
-    except ValueError as error:
-        print('Error in computing AUC. Error msg:{}'.format(error))
-        auc = 0
-    try:
-        ap = average_precision_score(y_true=ground_truth, y_score=activations, average=ill_avg)
-    except Exception as error:
-        print('Error in computing AP. Error msg:{}'.format(error))
-        ap = 0
-    bac = balanced_accuracy_score(y_true=ground_truth, y_pred=predictions)
-    sens = sensitivity_score(y_true=ground_truth, y_pred=predictions, average=avg)
-    spec = specificity_score(y_true=ground_truth, y_pred=predictions, average=avg)
-    prec = precision_score(y_true=ground_truth, y_pred=predictions, average=avg)
-    mcc = matthews_corrcoef(y_true=ground_truth, y_pred=predictions)
-    kappa = cohen_kappa_score(y1=ground_truth, y2=predictions)
-
-    metrics = {'Accuracy': mean_acc, 'F1': f1, 'AUC': auc, 'AP': ap, 'BAC': bac,
-               'Sensitivity': sens, 'Specificity': spec, 'Precision': prec, 'MCC': mcc, 'Kappa': kappa}
-
-    metrics = {k: round(v, demical_places) for k, v in metrics.items()}
-    return metrics
 
 
 def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
@@ -139,49 +104,6 @@ def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
     if np.isnan(mean_auc):
         raise ValueError("AUC is NaN — check survival probabilities or time points.")
 
-    # ==========================================================
-    # ---- Right-censored Negative Log-Likelihood (NLL_rc) ----
-    # ==========================================================
-    # Ensure survival probabilities are valid
-    S = np.clip(surv_ipcw, eps, 1.0)
-    # Enforce monotone decreasing survival (important if the model is noisy)
-    S = np.minimum.accumulate(S, axis=1)
-
-    # Previous survival (S_{t-1}), S_prev[:,0] = 1
-    S_prev = np.concatenate([np.ones((S.shape[0], 1)), S[:, :-1]], axis=1)
-    S_prev = np.clip(S_prev, eps, 1.0)
-
-    # hazards: h = 1 - S_k / S_{k-1}
-    h = 1.0 - (S / S_prev)
-    h = np.clip(h, eps, 1 - eps)
-
-    log_1mh = np.log(1.0 - h)
-    log_h = np.log(h)
-
-    times_i = test_ipcw["time"]
-    events_i = test_ipcw["event"]
-
-    # find index of time interval for each subject
-    idx = np.searchsorted(times, times_i, side="right") - 1
-    idx = np.clip(idx, 0, len(times) - 1).astype(int)
-
-    logL = np.zeros(len(test_ipcw), dtype=float)
-
-    for i in range(len(test_ipcw)):
-        k = idx[i]
-        if events_i[i]:
-            # event at interval k: survive until k-1, fail at k
-            if k > 0:
-                logL[i] = log_1mh[i, :k].sum() + log_h[i, k]
-            else:
-                logL[i] = log_h[i, 0]
-        else:
-            # censored at interval k: survive until k
-            logL[i] = log_1mh[i, : (k + 1)].sum()
-
-    NLL_rc = float(-logL.mean())
-    n_steps = len(times)
-    NLL_per_step = NLL_rc / max(n_steps, 1)
 
     # ---- Collect metrics ----
     metrics = {
@@ -189,6 +111,5 @@ def compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, times):
         "C-index IPCW": cindex_ipcw,
         "AUC": mean_auc,
         "IBS": ibs,
-        "NLL": NLL_per_step,
     }
     return metrics

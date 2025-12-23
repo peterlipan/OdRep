@@ -7,7 +7,7 @@ import pandas as pd
 from sksurv.util import Surv
 from models import CreateModel
 from datasets import CreateDataset
-from .metrics import ordinal_metrics, compute_surv_metrics
+from .metrics import compute_surv_metrics, discrete_rc_nll
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
@@ -154,6 +154,7 @@ class Trainer:
             
         event_indicator = torch.Tensor().cuda() # whether the event (death) has occurred
         duration = torch.Tensor().cuda()
+        labels = torch.Tensor().cuda()
         risk_prob = torch.Tensor().cuda()
         surv_prob = torch.Tensor().cuda()
 
@@ -179,12 +180,16 @@ class Trainer:
                 duration = torch.cat((duration, data['duration']), dim=0)
                 risk_prob = torch.cat((risk_prob, risk), dim=0)
                 surv_prob = torch.cat((surv_prob, outputs.surv), dim=0)
+                labels = torch.cat((labels, data['label']), dim=0)
 
             event_indicator = event_indicator.cpu().detach().numpy().astype(bool)
             duration = duration.cpu().detach().numpy()
             risk_prob = risk_prob.cpu().detach().numpy()
             surv_prob = surv_prob.cpu().detach().numpy()
+            labels = labels.cpu().detach().numpy()
             test_surv = Surv.from_arrays(event=event_indicator, time=duration)
+
+            _, nll_rc = discrete_rc_nll(events=event_indicator, labels=labels, surv_bins=surv_prob)
 
             # Earliest event
             min_time = duration[event_indicator].min()
@@ -200,9 +205,10 @@ class Trainer:
             N_eval = 1000 
             time_points = np.linspace(min_time, max_time, N_eval, dtype=float)
             time_labels = self.test_dataset._duration_to_label(time_points)
-            surv_prob = surv_prob[:, time_labels]
+            surv_prob_eval = surv_prob[:, time_labels]
 
-            metric_dict = compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob, time_points)
+            metric_dict = compute_surv_metrics(train_surv, test_surv, risk_prob, surv_prob_eval, time_points)
+            metric_dict['NLL'] = nll_rc
             metric_dict['Loss'] = loss / len(self.test_loader)
         
         self.model.train(training)

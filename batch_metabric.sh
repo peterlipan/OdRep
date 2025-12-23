@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ====== Datasets / Methods ======
 configs=("metabric")
-methods=("decouple" "ordsurv" "deepsurv" "deephit" "nll")
+methods=("clisurv-po" "clisurv-ph" "clisurv-gen")
 
 # ====== Professional time steps (in days) ======
 # Using the Julian year: 365.25 days -> 1 month = 365.25/12 = 30.4375 days
@@ -20,7 +20,12 @@ activations=("relu" "gelu" "tanh" "elu" "leaky_relu")
 seeds=(42)
 
 # Optional: choose GPU visibility once here
-VISIBLE_GPUS="0"
+VISIBLE_GPUS="1"
+
+#!/bin/bash
+set -euo pipefail
+
+# ... arrays ...
 
 for config in "${configs[@]}"; do
   for method in "${methods[@]}"; do
@@ -29,7 +34,10 @@ for config in "${configs[@]}"; do
         for hidden in "${mlp_hidden_dims[@]}"; do
           for act in "${activations[@]}"; do
             for seed in "${seeds[@]}"; do
+
               echo "[RUN] cfg=${config} method=${method} step=${step} layers=${layers} hidden=${hidden} act=${act} seed=${seed}"
+
+              # If python fails, print a message but continue looping
               python3 main.py \
                 --debug \
                 --config "${config}" \
@@ -39,7 +47,8 @@ for config in "${configs[@]}"; do
                 --d_hid "${hidden}" \
                 --activation "${act}" \
                 --seed "${seed}" \
-                --visible_gpus "${VISIBLE_GPUS}"
+                --visible_gpus "${VISIBLE_GPUS}" \
+              || echo "❌ Failed run (but continuing)."
             done
           done
         done

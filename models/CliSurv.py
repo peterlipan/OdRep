@@ -21,6 +21,7 @@ class MonotoneISplineLink(nn.Module):
         grid_size: int = 200,
         z_min: float = -8.0,
         z_max: float = 8.0,
+        eps: float = 1e-6
     ):
         super().__init__()
         self.num_basis = num_basis
@@ -41,12 +42,12 @@ class MonotoneISplineLink(nn.Module):
         self.register_buffer("I_grid", I_grid)
 
         # Learnable spline weights (non-negative via softplus)
-        self.raw_weights = nn.Parameter(torch.full((num_basis,), -4.0))
+        self.raw_weights = nn.Parameter(torch.full((num_basis,), -8.0))
         # softplus(-4) ~ 0.018 -> very small contribution at init
 
         # Learnable scales for the linear (PO) and spline parts
-        self.alpha = nn.Parameter(torch.tensor(.5))   # starts as logit
-        self.beta  = nn.Parameter(torch.tensor(.5))   # no spline at init
+        self.alpha = nn.Parameter(torch.tensor(1. - eps))   # starts as logit
+        self.beta  = nn.Parameter(torch.tensor(0. + eps))   # no spline at init
 
         # Optional global bias (can be 0)
         self.bias = nn.Parameter(torch.zeros(1))
@@ -174,9 +175,9 @@ class CDFLoss(nn.Module):
         mloss = self.monotonicity_loss(F_pred)
         return nll + self.rank_weight * rloss + self.mono_weight * mloss
 
-class OrdSurv(nn.Module):
+class CliSurv(nn.Module):
     def __init__(self, args, link='po', eps=1e-4):
-        super(OrdSurv, self).__init__()
+        super(CliSurv, self).__init__()
 
         self.encoder = get_encoder(args)
         self.d_hid = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
@@ -187,7 +188,7 @@ class OrdSurv(nn.Module):
         self.link = link
         self.eps = eps
 
-        if link == 'ispline':
+        if link == 'gen':
             self.activation = MonotoneISplineLink()
 
         self.biases = self.init_biases()
@@ -195,15 +196,14 @@ class OrdSurv(nn.Module):
     def init_biases(self):
         t = torch.linspace(self.eps, 1.0 - self.eps, self.n_classes)
         if self.link == 'ph':      # cloglog
-            lam = 1.0
-            init = torch.log(lam * t)        # approx log cumulative hazard
+            init = torch.log(-torch.log(1.0 - t))
         elif self.link == 'po':    # logit
             init = torch.log(t / (1.0 - t))  # logit(t)
-        elif self.link == 'probit':
+        elif self.link == 'pro':
             normal = torch.distributions.Normal(0., 1.)
             init = normal.icdf(t)
-        elif self.link == 'ispline':
-            init = torch.log(t / (1.0 - t))
+        elif self.link == 'gen':
+            init = torch.log(t / (1.0 - t)) # init as po
         else:
             init = torch.linspace(-1, 1, self.n_classes)
         return nn.Parameter(init, requires_grad=True)
@@ -216,7 +216,7 @@ class OrdSurv(nn.Module):
         elif self.link == 'pro':
             normal = torch.distributions.Normal(0., 1.)
             return normal.cdf(logits)
-        elif self.link == 'ispline':
+        elif self.link == 'gen':
             return self.activation(logits)
         else:
             raise ValueError(f"Unknown link function: {self.link}")

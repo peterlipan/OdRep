@@ -29,9 +29,9 @@ def CreateModel(args):
     if args.method.lower() == 'deephit':
         from .DeepHit import DeepHit
         return DeepHit(args)
-    elif args.method.lower().startswith('ordsurv'):
-        from .OrdSurv import OrdSurv
-        return OrdSurv(args, link=args.method.lower().split('-')[1] if '-' in args.method else 'po')
+    elif args.method.lower().startswith('clisurv'):
+        from .CliSurv import CliSurv
+        return CliSurv(args, link=args.method.lower().split('-')[1] if '-' in args.method else 'po')
     elif args.method.lower() == 'deepsurv':
         from .DeepSurv import DeepSurv
         return DeepSurv(args)
