@@ -22,3 +22,6 @@ def CreateDataset(args):
     elif args.dataset.lower() == 'external':
         from .external import RotterdamGBSGData
         return RotterdamGBSGData(step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right, train_ratio=args.train_ratio)
+    elif args.dataset.lower() == 'sac':
+        from .sac_simulations import SimSACConstTrainTestData
+        return SimSACConstTrainTestData(root=args.data_root, n_train=args.n_train, n_test=args.n_test, step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)

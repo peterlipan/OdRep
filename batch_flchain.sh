@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ====== Datasets / Methods ======
-configs=("gbsg")
-methods=("clisurv-po" "clisurv-ph" "clisurv-gen")
+configs=("flchain")
+methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "coxtime" "nmtlr" "cqrnn")
 
 # ====== Professional time steps (in days) ======
 # Using the Julian year: 365.25 days -> 1 month = 365.25/12 = 30.4375 days
@@ -20,7 +20,7 @@ activations=("relu" "gelu" "tanh" "elu" "leaky_relu")
 seeds=(42)
 
 # Optional: choose GPU visibility once here
-VISIBLE_GPUS="0"
+VISIBLE_GPUS="1"
 
 #!/bin/bash
 set -euo pipefail

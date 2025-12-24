@@ -363,6 +363,14 @@ class Trainer:
         settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Step (days)', 'Train Ratio', 'Layers', 'Hidden Dim', 'Activation']
         kwargs = ['dataset','method', 'backbone', 'kfold', 'epochs', 'seed', 'step', 'train_ratio', 'n_layers', 'd_hid', 'activation']
 
+        # for simulations
+        if hasattr(args, 'n_train'):
+            settings.append('N_train')
+            kwargs.append('n_train')
+        if hasattr(args, 'n_test'):
+            settings.append('N_test')
+            kwargs.append('n_test')
+
         set2kwargs = {k: v for k, v in zip(settings, kwargs )}
 
         metric_names = self.m_logger.metrics()
