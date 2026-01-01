@@ -24,4 +24,23 @@ def CreateDataset(args):
         return RotterdamGBSGData(step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right, train_ratio=args.train_ratio)
     elif args.dataset.lower() == 'sac':
         from .sac_simulations import SimSACConstTrainTestData
-        return SimSACConstTrainTestData(root=args.data_root, n_train=args.n_train, n_test=args.n_test, step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
+        return SimSACConstTrainTestData(root=args.data_root, n_train=args.n_train, n_test=args.n_test, normalize=args.normalize,
+                                        step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
+    elif args.dataset.lower() == 'links':
+        link = args.link.lower()
+        if link == 'ph':
+            from .link_simulations import PHWeibullDataset
+            return PHWeibullDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+                                   step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
+        elif link == 'po':
+            from .link_simulations import POLogLogisticDataset
+            return POLogLogisticDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+                                       step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
+        elif link == 'gen':
+            from .link_simulations import LinkRecoveryDataset
+            return LinkRecoveryDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+                                      step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
+        else:
+            raise ValueError(f"Unknown link function: {args.link}")
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")

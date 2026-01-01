@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ====== Datasets / Methods ======
 configs=("support")
-methods=("ordsurv" "angsurv" "deepsurv" "deephit" "nll")
+methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "coxtime" "nmtlr" "cqrnn")
 
 # ====== Professional time steps (in days) ======
 # Using the Julian year: 365.25 days -> 1 month = 365.25/12 = 30.4375 days

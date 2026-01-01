@@ -10,8 +10,9 @@ class SimSACConstTrainTestData:
     Simulated survival dataset using pycox.simulations.SimStudySACCensorConst.
 
     Official split:
-      - Training: generated separately with size n_train, cached as train_{n_train}.csv
-      - Testing: fixed size n_test, cached as test_{n_test}.csv
+      - Generate full dataset (n_train + n_test) with single seed
+      - Split into train (first n_train) and test (remaining n_test)
+      - Cache both splits
 
     CSV schema:
       - covariates: x0 ... x44
@@ -24,10 +25,11 @@ class SimSACConstTrainTestData:
       - SurvivalDataset yields dict with keys: data, label, duration, event
     """
 
-    def __init__(self, root, n_train, n_test, step=1.0, seed=42, pad_left=1, pad_right=1):
+    def __init__(self, root, n_train, n_test=10000, normalize=False, step=1.0, seed=42, pad_left=1, pad_right=1):
         self.root = root
         self.n_train = int(n_train)
         self.n_test = int(n_test)
+        self.normalize = normalize
         self.step = float(step)
         self.seed = int(seed)
         self.pad_left = int(pad_left)
@@ -35,22 +37,21 @@ class SimSACConstTrainTestData:
 
         os.makedirs(self.root, exist_ok=True)
 
-        # Ensure cached files exist (generate once, then reuse)
-        self.train_path = self._train_path(self.n_train)
-        self.test_path = self._test_path(self.n_test)
+        # Cache paths include both sizes and seed for uniqueness
+        self.train_path = os.path.join(self.root, f"train_{self.n_train}_test_{self.n_test}_seed_{self.seed}.csv")
+        self.test_path = os.path.join(self.root, f"test_{self.n_train}_test_{self.n_test}_seed_{self.seed}.csv")
 
-        if not os.path.exists(self.train_path):
-            self._generate_and_save(split="train", n=self.n_train, path=self.train_path, seed=self.seed + 0)
-        if not os.path.exists(self.test_path):
-            self._generate_and_save(split="test", n=self.n_test, path=self.test_path, seed=self.seed + 1)
+        # Generate and split if not cached
+        if not os.path.exists(self.train_path) or not os.path.exists(self.test_path):
+            self._generate_and_split_save()
 
         # Load cached splits
         self.train_df = self._load_csv(self.train_path)
         self.test_df = self._load_csv(self.test_path)
 
         # Extract arrays
-        self.train_data, self.train_duration, self.train_event = self._df_to_arrays(self.train_df)
-        self.test_data, self.test_duration, self.test_event = self._df_to_arrays(self.test_df)
+        self.train_data, self.train_duration, self.train_event = self._df_to_arrays(self.train_df, normalize=self.normalize)
+        self.test_data, self.test_duration, self.test_event = self._df_to_arrays(self.test_df, normalize=self.normalize)
 
         # Dataset properties (use training split for n_features)
         self.n_features = self.train_data.shape[1]  # expected 45
@@ -71,13 +72,6 @@ class SimSACConstTrainTestData:
         max_label = max(self.train_label.max(), self.test_label.max())
         self.n_classes = int(max_label + self.pad_left + self.pad_right)
 
-    # ---------- paths ----------
-    def _train_path(self, n_train: int) -> str:
-        return os.path.join(self.root, f"train_{int(n_train)}.csv")
-
-    def _test_path(self, n_test: int) -> str:
-        return os.path.join(self.root, f"test_{int(n_test)}.csv")
-
     # ---------- schema helpers ----------
     @staticmethod
     def _feature_cols():
@@ -93,31 +87,39 @@ class SimSACConstTrainTestData:
             raise ValueError(f"[{context}] Missing columns: {sorted(missing)}")
 
     # ---------- generation / IO ----------
-    def _generate_and_save(self, split: str, n: int, path: str, seed: int):
+    def _generate_and_split_save(self):
         """
-        Generate a split once and save it. We do not attempt to guarantee reproducibility
-        beyond caching: once saved, we always reuse the same file.
+        Generate full dataset with single seed, then split into train/test.
+        This ensures i.i.d. samples with the same underlying parameters.
         """
-        # Best-effort seed control (even if pycox uses other RNGs, caching is the real guarantee)
-        np.random.seed(int(seed))
+        n_total = self.n_train + self.n_test
+        
+        # Best-effort seed control
+        np.random.seed(int(self.seed))
 
+        # Generate full dataset
         sim = SimStudySACCensorConst()
-        data = sim.simulate(int(n))
-        df = sim.dict2df(data, True, False)
+        data = sim.simulate(int(n_total))
+        df_full = sim.dict2df(data, True, False)
 
-        self._validate_df(df, context=f"generated-{split}")
+        self._validate_df(df_full, context="generated-full")
 
-        # Hard-coded months -> days scaling (as requested)
-        df = df.copy()
-        df["duration"] = df["duration"].astype(np.float32) * 30.4375
-        df["event"] = df["event"].astype(np.int64)  # event=1 observed, 0 censored
+        # Hard-coded months -> days scaling
+        df_full = df_full.copy()
+        df_full["duration"] = df_full["duration"].astype(np.float32) * 30.4375
+        df_full["event"] = df_full["event"].astype(np.int64)
 
         # Ensure covariate dtypes
         for c in self._feature_cols():
-            df[c] = df[c].astype(np.float32)
+            df_full[c] = df_full[c].astype(np.float32)
 
-        # Save
-        df.to_csv(path, index=False)
+        # Split into train and test
+        train_df = df_full.iloc[:self.n_train].copy()
+        test_df = df_full.iloc[self.n_train:].copy()
+
+        # Save both splits
+        train_df.to_csv(self.train_path, index=False)
+        test_df.to_csv(self.test_path, index=False)
 
     def _load_csv(self, path: str) -> pd.DataFrame:
         df = pd.read_csv(path)
@@ -127,15 +129,23 @@ class SimSACConstTrainTestData:
         df = df.copy()
         for c in self._feature_cols():
             df[c] = df[c].astype(np.float32)
-        df["duration"] = df["duration"].astype(np.float32)  # assumed already in DAYS (cached that way)
+        df["duration"] = df["duration"].astype(np.float32)
         df["event"] = df["event"].astype(np.int64)
         return df
 
-    def _df_to_arrays(self, df: pd.DataFrame):
+    def _df_to_arrays(self, df: pd.DataFrame, normalize: bool = False):
         X = df[self._feature_cols()].values.astype(np.float32)
         duration = df["duration"].values.astype(np.float32)
         event = df["event"].values.astype(np.float32)
+        if normalize:
+            X = self._normalize(X)
         return X, duration, event
+    
+    def _normalize(self, X):
+        mean = np.mean(X, axis=0)
+        std = np.std(X, axis=0)
+        std[std == 0] = 1
+        return (X - mean) / std
 
     # ---------- discretization ----------
     def _duration_to_label(self, duration):
@@ -170,7 +180,6 @@ class SimSACConstTrainTestData:
 
 class SurvivalDataset(Dataset):
     def __init__(self, parent_data, data, duration, event, label, n_features, n_classes, n_events):
-        # No train_ratio subsampling (as requested)
         self.data = data.astype(np.float32)
         self.duration = duration.astype(np.int64)
         self.event = event.astype(np.int64)
@@ -193,12 +202,12 @@ class SurvivalDataset(Dataset):
 
 
 if __name__ == "__main__":
-    # Example usage (same pattern as your RotterdamGBSGData)
-    data_loader = SimSACConstTrainTestData(root="./sim_sac", n_train=5000, step=30.0, seed=42)
+    # Example usage
+    data_loader = SimSACConstTrainTestData(root="./sim_sac", n_train=5000, n_test=10000, step=30.0, seed=42)
     train_dataset, test_dataset = data_loader.get_official_train_test()
 
-    print(f"Training set size: {len(train_dataset)}")  # 5000
-    print(f"Test set size: {len(test_dataset)}")       # 10000
+    print(f"Training set size: {len(train_dataset)}")
+    print(f"Test set size: {len(test_dataset)}")
     print(f"Number of features: {train_dataset.n_features}")
     print(f"Number of classes: {train_dataset.n_classes}")
     print(f"Number of events: {train_dataset.n_events}")

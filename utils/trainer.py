@@ -370,6 +370,9 @@ class Trainer:
         if hasattr(args, 'n_test'):
             settings.append('N_test')
             kwargs.append('n_test')
+        if hasattr(args, 'link'):
+            settings.append('Link')
+            kwargs.append('link')
 
         set2kwargs = {k: v for k, v in zip(settings, kwargs )}
 
