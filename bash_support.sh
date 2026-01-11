@@ -3,12 +3,12 @@ set -euo pipefail
 
 # ====== Datasets / Methods ======
 configs=("support")
-methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "coxtime" "nmtlr" "cqrnn")
+methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "nmtlr" "coxtime" "cqrnn")
 
 # ====== Professional time steps (in days) ======
 # Using the Julian year: 365.25 days -> 1 month = 365.25/12 = 30.4375 days
 # Adds 3-month and 6-month bins; adjusts multi-year bins accordingly.
-steps=(1)
+steps=(7 30.4375 91.3125 182.625 365.25 1095.75 1826.25)
 # Note: 109.575e1 == 1095.75 (3 years). Written this way to avoid locale float parsing quirks; use 1095.75 if you prefer.
 
 # ====== MLP encoder hyperparams ======

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ====== Datasets / Methods ======
 configs=("links")
-methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "coxtime" "nmtlr" "cqrnn")
+methods=("clisurv-po" "clisurv-ph" "clisurv-gen")
 links=("ph" "po" "gen")
 
 

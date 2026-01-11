@@ -29,6 +29,8 @@ class Trainer:
     def _init_components(self):
         args = self.args
         print(f"Train dataset size: {len(self.train_dataset)}, Test dataset size: {len(self.test_dataset)}")
+        print(f"Max duration in train set: {self.train_dataset.duration.max()}, Max duration in test set: {self.test_dataset.duration.max()}")
+        print(f"Min duration in train set: {self.train_dataset.duration.min()}, Min duration in test set: {self.test_dataset.duration.min()}")
 
         self.train_loader = DataLoader(self.train_dataset, batch_size=args.batch_size, 
                                        shuffle=True, num_workers=args.workers, drop_last=True, pin_memory=True)
@@ -203,7 +205,7 @@ class Trainer:
 
             # Sample times within [min_time, max_time]
             N_eval = 1000 
-            time_points = np.linspace(min_time, max_time, N_eval, dtype=float)
+            time_points = np.linspace(min_time, max_time, N_eval, endpoint=False, dtype=float)
             time_labels = self.test_dataset._duration_to_label(time_points)
             surv_prob_eval = surv_prob[:, time_labels]
 
@@ -357,7 +359,8 @@ class Trainer:
     def _save_fold_surv_avg_results(self, metric_dict, keep_best=True):
         # keep_best: whether save the best model (highest mcc) for each fold
         args = self.args
-        df_name = f"{args.kfold}Fold_{args.dataset}.xlsx"
+        suffix = "_ours" if 'clisurv' in args.method.lower() else "_baseline"
+        df_name = f"{args.kfold}Fold_{args.dataset}{suffix}.xlsx"
         res_path = args.results
 
         settings = ['Dataset', 'Method', 'Model', 'KFold', 'Epochs', 'Seed', 'Step (days)', 'Train Ratio', 'Layers', 'Hidden Dim', 'Activation']

@@ -294,6 +294,11 @@ class BaseSurvivalDataset:
         # Extract arrays
         self.train_data, self.train_duration, self.train_event = self._df_to_arrays(self.train_df)
         self.test_data, self.test_duration, self.test_event = self._df_to_arrays(self.test_df)
+
+        # to be consistent with other datasets, treat the generated durations as under unit of months then convert to days and avoid 0
+        self.train_duration = self.train_duration * 30.4375 + 1.
+        self.test_duration = self.test_duration * 30.4375 + 1.
+
         
         # Dataset properties
         self.n_features = self.d
