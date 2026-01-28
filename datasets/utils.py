@@ -29,16 +29,16 @@ def CreateDataset(args):
     elif args.dataset.lower() == 'links':
         link = args.link.lower()
         if link == 'ph':
-            from .link_simulations import PHWeibullDataset
-            return PHWeibullDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+            from .link_simulations import PHPiecewiseDataset
+            return PHPiecewiseDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
                                    step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
         elif link == 'po':
-            from .link_simulations import POLogLogisticDataset
-            return POLogLogisticDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+            from .link_simulations import POPiecewiseDataset
+            return POPiecewiseDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
                                        step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
         elif link == 'gen':
-            from .link_simulations import LinkRecoveryDataset
-            return LinkRecoveryDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
+            from .link_simulations import LinkRecoveryHardDataset
+            return LinkRecoveryHardDataset(root=args.data_root, n_train=args.n_train, n_test=args.n_test,
                                       step=args.step, seed=args.seed, pad_left=args.pad_left, pad_right=args.pad_right)
         else:
             raise ValueError(f"Unknown link function: {args.link}")

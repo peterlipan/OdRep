@@ -5,6 +5,7 @@ set -euo pipefail
 configs=("external")
 methods=("clisurv-po" "clisurv-ph" "clisurv-gen")
 
+
 # ====== Professional time steps (in days) ======
 # Using the Julian year: 365.25 days -> 1 month = 365.25/12 = 30.4375 days
 # Adds 3-month and 6-month bins; adjusts multi-year bins accordingly.

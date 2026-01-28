@@ -10,7 +10,7 @@ data_root: "./datasets/links"
 
 kfold: -1 # use the fixed validation set
 stratify: True
-step: 7.0 # fixed
+step: 1.0 # fixed
 normalize: False
 pad_left: 1 # number of left padding intervals
 pad_right: 1 # number of right padding intervals

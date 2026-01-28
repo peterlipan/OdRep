@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 from .backbone import get_encoder
 from .utils import ModelOutputs
@@ -45,6 +46,8 @@ class LassoCox(nn.Module):
         self.bin_times_ = None
         self.baseline_surv_bins_ = None
         self._baseline_ready_for_bins = False
+
+        self.pad_left = args.pad_left
 
     def forward(self, data):
         x = data['data']
@@ -181,3 +184,35 @@ class LassoCox(nn.Module):
                 raise RuntimeError("Forward did not produce surv. Baseline not ready?")
             surv_rows.append(out.surv.cpu())
         return torch.cat(surv_rows, dim=0)
+
+    @torch.no_grad()
+    def save_baseline(
+        self,
+        ground_truth_survival: np.ndarray,
+    ):
+        # Must have projected baseline already
+        if self.baseline_surv_bins_ is None:
+            raise RuntimeError(
+                "baseline_surv_bins_ is None. Call prepare_for_validation(...) first."
+            )
+
+        ground_truth_survival = np.asarray(ground_truth_survival, dtype=np.float32)
+        if ground_truth_survival.ndim != 1:
+            raise ValueError("ground_truth_survival must be 1D")
+
+        S0 = self.baseline_surv_bins_.detach().cpu().numpy().astype(np.float32)  # [T]
+
+        if S0.shape[0] != ground_truth_survival.shape[0]:
+            raise ValueError(
+                f"baseline_surv_bins_ length ({S0.shape[0]}) must match "
+                f"ground_truth_survival ({ground_truth_survival.shape[0]})"
+            )
+
+        payload = {
+            "method": "LassoCox",
+            "baseline_survival": S0,
+            "ground_truth_survival": ground_truth_survival,
+        }
+        return payload
+
+

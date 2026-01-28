@@ -162,8 +162,19 @@ class Trainer:
 
         # calculate the baseline_surv for deepsurv
         if args.method.lower() in ['deepsurv', 'lassocox', 'coxtime']:
-            bin_times = torch.arange(self.train_dataset.n_classes, dtype=torch.float32)  # or dataset.bin_times
+            bin_times = (torch.arange(self.train_dataset.n_classes, dtype=torch.float32) - args.pad_left) * args.step
+            bin_times = torch.clamp(bin_times, min=0.0)
             self.model.prepare_for_validation(self.train_loader, bin_times.to(duration.device))
+        
+        if args.dataset.lower() == 'links':
+            if args.method.lower() in ['clisurv-ph', 'clisurv-po', 'clisurv-gen', 'deepsurv', 'lassocox']:
+                result_folder = os.path.join(args.results, "links", args.link)
+                os.makedirs(result_folder, exist_ok=True)
+                result_path = os.path.join(result_folder, f"{args.method}.npz")
+                ground_truth_survival = self.train_dataset.survival_at_grids
+                surv_dict = self.model.save_baseline(ground_truth_survival=ground_truth_survival)
+                np.savez(result_path, **surv_dict)
+                
 
         # for estimating censoring distribution in the training set
         train_duration = self.train_dataset.duration

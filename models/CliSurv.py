@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from .backbone import get_encoder
@@ -172,76 +173,158 @@ class CDFLoss(nn.Module):
 
         nll   = self.nll_from_cdf(F_pred, label, event)
         rloss = self.rank_loss_on_risk(risk, duration, event)
-        mloss = self.monotonicity_loss(F_pred)
-        return nll + self.rank_weight * rloss + self.mono_weight * mloss
+        return nll + self.rank_weight * rloss
+    
 
 class CliSurv(nn.Module):
-    def __init__(self, args, link='po', eps=1e-4):
-        super(CliSurv, self).__init__()
+    """
+    Cumulative-link survival model with link-specific, monotone baseline
+    parameterization.
 
+    - PH: learns cumulative baseline hazard Λ₀(t)
+    - PO: learns baseline CDF F₀(t) directly (no identifiable hazard object)
+    - Gen: learns baseline CDF passed through a flexible monotone link
+
+    The baseline is parameterized via positive increments to ensure monotonicity
+    and stable optimization.
+    """
+
+    def __init__(self, args, link: str = "po", eps: float = 1e-4):
+        super().__init__()
+
+        # -------------------------
+        # Backbone & head
+        # -------------------------
         self.encoder = get_encoder(args)
-        self.d_hid = args.d_hid if hasattr(args, 'd_hid') else self.encoder.d_hid
-        self.n_classes = args.n_classes
+        self.d_hid = args.d_hid
+        self.n_classes = int(args.n_classes)
+
         self.head = nn.Linear(self.d_hid, 1, bias=False)
         self.criterion = CDFLoss()
-        self.scaler = nn.Parameter(torch.ones(1))  # Scale for logits
-        self.link = link
-        self.eps = eps
 
-        if link == 'gen':
+        self.link = link.lower()
+        self.eps = float(eps)
+
+        if self.link == "gen":
             self.activation = MonotoneISplineLink()
 
-        self.biases = self.init_biases()
+        # Baseline reparameterization
+        self.raw_deltas = nn.Parameter(torch.full((self.n_classes,), -3.0))
+        self.log_scale = nn.Parameter(torch.tensor(1.0))
+        self._cached_baseline_logits = None
 
-    def init_biases(self):
-        t = torch.linspace(self.eps, 1.0 - self.eps, self.n_classes)
-        if self.link == 'ph':      # cloglog
-            init = torch.log(-torch.log(1.0 - t))
-        elif self.link == 'po':    # logit
-            init = torch.log(t / (1.0 - t))  # logit(t)
-        elif self.link == 'pro':
-            normal = torch.distributions.Normal(0., 1.)
-            init = normal.icdf(t)
-        elif self.link == 'gen':
-            init = torch.log(t / (1.0 - t)) # init as po
+    def _baseline_logits(self) -> torch.Tensor:
+        eps = self.eps
+
+        # positive increments -> monotone u_k in (0, 1]
+        delta = F.softplus(self.raw_deltas) + eps          # [T] > 0
+        u = torch.cumsum(delta, dim=0)                     # [T]
+        u = u / (u[-1] + eps)                              # normalize to (0,1]
+
+        if self.link == "ph":
+            # Proportional Hazards:
+            #   Λ₀(k) = scale * u_k
+            #   b_k = log Λ₀(k)
+            scale = torch.exp(self.log_scale)
+            Lambda = scale * u
+            b = torch.log(Lambda + eps)
+
+        elif self.link in {"po", "gen"}:
+            # Proportional Odds / General:
+            # Learn baseline CDF directly (natural object under NLL)
+            F0 = eps + (1.0 - 2.0 * eps) * u
+            F0 = F0.clamp(eps, 1.0 - eps)
+            b = torch.log(F0 / (1.0 - F0))                 # logit(F₀)
+
         else:
-            init = torch.linspace(-1, 1, self.n_classes)
-        return nn.Parameter(init, requires_grad=True)
+            raise ValueError(f"Unknown link: {self.link}")
 
-    def activate(self, logits):
-        if self.link == 'po':
+        return b
+
+    # -------------------------------------------------
+    # Link activation
+    # -------------------------------------------------
+    def activate(self, logits: torch.Tensor) -> torch.Tensor:
+        if self.link == "po":
             return torch.sigmoid(logits)
-        elif self.link == 'ph':
-            return 1. - torch.exp(-torch.exp(logits))
-        elif self.link == 'pro':
-            normal = torch.distributions.Normal(0., 1.)
+
+        if self.link == "ph":
+            # cloglog
+            return 1.0 - torch.exp(-torch.exp(logits))
+
+        if self.link == "pro":
+            normal = torch.distributions.Normal(0.0, 1.0)
             return normal.cdf(logits)
-        elif self.link == 'gen':
+
+        if self.link == "gen":
             return self.activation(logits)
-        else:
-            raise ValueError(f"Unknown link function: {self.link}")
-        
+
+        raise ValueError(f"Unknown link function: {self.link}")
+
+    # -------------------------------------------------
+    # Forward
+    # -------------------------------------------------
     def forward(self, data):
+        x = data["data"]
+        features = self.encoder(x)
+        proj = self.head(features)                          # [B, 1]
 
-        features = self.encoder(data['data'])
-        proj = self.head(features)  # [B, 1]
-        logits = proj + self.biases.view(1, -1)  # [B, T]
-        cdf = self.activate(self.scaler * logits)  # [B, T]
-        risk = proj.view(-1)  # [B * T]
+        # baseline logits
+        b = self._baseline_logits()                         # [T]
+        self._cached_baseline_logits = b
 
-        # force monotonicity only during eval
+        logits = proj + b.view(1, -1)                       # [B, T]
+        cdf = self.activate(logits)                         # [B, T]
+        risk = proj.view(-1)                                # [B]
+
+        # enforce monotonicity only at evaluation
         if not self.training:
-            cdf = torch.cummax(cdf, dim=1).values.clamp_(min=self.eps, max=1.0 - self.eps)
+            cdf = torch.cummax(cdf, dim=1).values
+            cdf = cdf.clamp_(min=self.eps, max=1.0 - self.eps)
 
-        surv = 1. - cdf
+        surv = 1.0 - cdf
 
-        return ModelOutputs(features=features,
-                            logits=logits,
-                            cdf=cdf,
-                            risk=risk,
-                            surv=surv,
-                            biases=self.biases,
-                            projection_weight=self.head.weight.view(-1))
+        return ModelOutputs(
+            features=features,
+            logits=logits,
+            cdf=cdf,
+            risk=risk,
+            surv=surv,
+        )
 
     def compute_loss(self, outputs, data):
         return self.criterion(outputs, data)
+
+    # -------------------------------------------------
+    # Baseline export (for analysis / figures)
+    # -------------------------------------------------
+    @torch.no_grad()
+    def save_baseline(self, ground_truth_survival: np.ndarray):
+        """
+        Save baseline survival S₀(k) for proj = 0.
+
+        Note:
+        - Meaningful comparison to GT baseline is expected ONLY for PH.
+        - For PO / Gen, this is provided for completeness and visualization.
+        """
+        ground_truth_survival = np.asarray(ground_truth_survival, dtype=np.float32)
+        if ground_truth_survival.ndim != 1:
+            raise ValueError("ground_truth_survival must be 1D")
+
+        b = self._baseline_logits()
+        F0 = self.activate(b)
+        F0 = torch.cummax(F0, dim=0).values
+        F0 = F0.clamp_(min=self.eps, max=1.0 - self.eps)
+
+        S0 = (1.0 - F0).cpu().numpy().astype(np.float32)
+
+        if S0.shape[0] != ground_truth_survival.shape[0]:
+            raise ValueError(
+                f"baseline length {S0.shape[0]} != gt length {ground_truth_survival.shape[0]}"
+            )
+
+        return {
+            "method": f"CliSurv-{self.link}",
+            "baseline_survival": S0,
+            "ground_truth_survival": ground_truth_survival,
+        }

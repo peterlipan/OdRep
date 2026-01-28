@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from .backbone import get_encoder
@@ -197,3 +198,32 @@ class DeepSurv(nn.Module):
             surv_rows.append(out.surv.cpu())
         return torch.cat(surv_rows, dim=0)  # (n, n_bins)
 
+    @torch.no_grad()
+    def save_baseline(
+        self,
+        ground_truth_survival: np.ndarray,
+    ):
+        # Must have projected baseline already
+        if self.baseline_surv_bins_ is None:
+            raise RuntimeError(
+                "baseline_surv_bins_ is None. Call prepare_for_validation(...) first."
+            )
+
+        ground_truth_survival = np.asarray(ground_truth_survival, dtype=np.float32)
+        if ground_truth_survival.ndim != 1:
+            raise ValueError("ground_truth_survival must be 1D")
+
+        S0 = self.baseline_surv_bins_.detach().cpu().numpy().astype(np.float32)  # [T]
+
+        if S0.shape[0] != ground_truth_survival.shape[0]:
+            raise ValueError(
+                f"baseline_surv_bins_ length ({S0.shape[0]}) must match "
+                f"ground_truth_survival ({ground_truth_survival.shape[0]})"
+            )
+
+        payload = {
+            "method": "DeepSurv",
+            "baseline_survival": S0,
+            "ground_truth_survival": ground_truth_survival,
+        }
+        return payload

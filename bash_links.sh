@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ====== Datasets / Methods ======
 configs=("links")
-methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "coxtime" "nmtlr" "cqrnn")
+methods=("deepsurv" "deephit" "logistichazards" "pchazard" "lassocox" "nmtlr")
 links=("ph" "po" "gen")
 
 
@@ -13,7 +13,7 @@ mlp_hidden_dims=(256 512 1024 2048)
 activations=("relu" "gelu" "tanh" "elu" "leaky_relu")
 
 # Optional: set a seed list if you want repeats per config for stability
-seeds=(1 2026 13 28 42)
+seeds=(42)
 
 # Optional: choose GPU visibility once here
 VISIBLE_GPUS="0"
